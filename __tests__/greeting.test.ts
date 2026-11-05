@@ -1,0 +1,22 @@
+import { greetingForHour } from '@/utils/greeting';
+
+describe('greetingForHour', () => {
+  it('retorna Bom dia para horas entre 5 e 11', () => {
+    expect(greetingForHour(5)).toBe('Bom dia');
+    expect(greetingForHour(9)).toBe('Bom dia');
+    expect(greetingForHour(11)).toBe('Bom dia');
+  });
+
+  it('retorna Boa tarde para horas entre 12 e 17', () => {
+    expect(greetingForHour(12)).toBe('Boa tarde');
+    expect(greetingForHour(15)).toBe('Boa tarde');
+    expect(greetingForHour(17)).toBe('Boa tarde');
+  });
+
+  it('retorna Boa noite para horas da noite e madrugada', () => {
+    expect(greetingForHour(18)).toBe('Boa noite');
+    expect(greetingForHour(23)).toBe('Boa noite');
+    expect(greetingForHour(0)).toBe('Boa noite');
+    expect(greetingForHour(4)).toBe('Boa noite');
+  });
+});
