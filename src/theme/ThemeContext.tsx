@@ -1,82 +1,60 @@
-import React, { createContext, useContext, useEffect, useState, useMemo } from 'react';
-import { useColorScheme } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { ThemeTokens, lightTheme, darkTheme } from './tokens';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
+import { Appearance } from 'react-native';
+import { darkTheme, lightTheme } from './tokens';
+import type { ThemeTokens } from './tokens';
 
-export type ThemePreference = 'system' | 'light' | 'dark';
+export type ThemePreference = 'light' | 'dark' | 'system';
+
+const STORAGE_KEY = 'rotafit.theme-preference';
 
 interface ThemeContextValue {
   theme: ThemeTokens;
   preference: ThemePreference;
-  setPreference: (pref: ThemePreference) => Promise<void>;
-  isDark: boolean;
+  setPreference: (pref: ThemePreference) => void;
 }
-
-const THEME_STORAGE_KEY = 'rotafit.theme-preference';
 
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
-export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const systemScheme = useColorScheme();
+// Tema salvo no aparelho. Padrão "system": segue o tema do celular até o
+// usuário escolher um no Perfil.
+export function ThemeProvider({ children }: { children: ReactNode }) {
   const [preference, setPreferenceState] = useState<ThemePreference>('system');
-  const [isReady, setIsReady] = useState(false);
+  const [systemScheme, setSystemScheme] = useState(Appearance.getColorScheme());
 
   useEffect(() => {
-    (async () => {
-      try {
-        const saved = await AsyncStorage.getItem(THEME_STORAGE_KEY);
-        if (saved === 'light' || saved === 'dark' || saved === 'system') {
+    AsyncStorage.getItem(STORAGE_KEY)
+      .then((saved) => {
+        if (saved === 'light' || saved === 'dark' || saved === 'system')
           setPreferenceState(saved);
-        }
-      } catch {
-        // Fallback silencioso para 'system'
-      } finally {
-        setIsReady(true);
-      }
-    })();
+      })
+      .catch(() => undefined);
+    const sub = Appearance.addChangeListener(({ colorScheme }) =>
+      setSystemScheme(colorScheme),
+    );
+    return () => sub.remove();
   }, []);
 
-  const setPreference = async (newPref: ThemePreference) => {
-    setPreferenceState(newPref);
-    try {
-      await AsyncStorage.setItem(THEME_STORAGE_KEY, newPref);
-    } catch {
-      // Ignora falha de gravação local
-    }
+  const setPreference = (pref: ThemePreference) => {
+    setPreferenceState(pref);
+    AsyncStorage.setItem(STORAGE_KEY, pref).catch(() => undefined);
   };
 
-  const activeMode: 'light' | 'dark' = useMemo(() => {
-    if (preference === 'system') {
-      return systemScheme === 'dark' ? 'dark' : 'light';
-    }
-    return preference;
-  }, [preference, systemScheme]);
-
-  const theme = useMemo(() => {
-    return activeMode === 'dark' ? darkTheme : lightTheme;
-  }, [activeMode]);
+  const mode =
+    preference === 'system' ? (systemScheme === 'dark' ? 'dark' : 'light') : preference;
+  const theme = mode === 'dark' ? darkTheme : lightTheme;
 
   const value = useMemo(
-    () => ({
-      theme,
-      preference,
-      setPreference,
-      isDark: activeMode === 'dark',
-    }),
-    [theme, preference, activeMode],
+    () => ({ theme, preference, setPreference }),
+    [theme, preference],
   );
-
-  if (!isReady) {
-    return null;
-  }
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
 
 export function useTheme(): ThemeContextValue {
-  const ctx = useContext(ThemeContext);
-  if (!ctx) {
-    throw new Error('useTheme must be used within a ThemeProvider');
-  }
-  return ctx;
+  const context = useContext(ThemeContext);
+  if (!context) throw new Error('useTheme deve ser usado dentro de <ThemeProvider>');
+  return context;
 }

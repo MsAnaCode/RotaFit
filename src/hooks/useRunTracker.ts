@@ -1,134 +1,106 @@
-import { useEffect, useReducer, useRef, useState, useCallback } from 'react';
 import * as Location from 'expo-location';
-import { trackerReducer, initialTrackerState, elapsedSeconds } from '@/utils/tracker';
-import { averagePaceSecPerKm, estimateCalories } from '@/utils/geo';
-import { RoutePoint } from '@/types';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { averagePaceSecPerKm, simplifyRoute } from '@/utils/geo';
+import { elapsedSeconds, initialTrackerState, trackerReducer } from '@/utils/tracker';
+import type { SaveRunInput } from '@/types';
 
+// Liga o reducer puro (utils/tracker.ts) ao GPS de verdade e a um relógio de
+// 1 em 1 segundo. A lógica de "o que fazer com cada evento" já está testada
+// no reducer; aqui só existe o encanamento com o sensor do aparelho.
 export function useRunTracker() {
   const [state, dispatch] = useReducer(trackerReducer, initialTrackerState);
-  const [seconds, setSeconds] = useState(0);
-  const [permissionError, setPermissionError] = useState<string | null>(null);
-  const locationSubRef = useRef<Location.LocationSubscription | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const [permissionDenied, setPermissionDenied] = useState(false);
+  const subscription = useRef<Location.LocationSubscription | null>(null);
 
-  // Ticker de tempo decorrido
   useEffect(() => {
-    let interval: ReturnType<typeof setInterval> | null = null;
-    if (state.status === 'running') {
-      interval = setInterval(() => {
-        setSeconds(elapsedSeconds(state));
-      }, 500);
-    } else {
-      setSeconds(elapsedSeconds(state));
-    }
-
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [state]);
+    if (state.status !== 'active') return undefined;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [state.status]);
 
   const stopWatching = useCallback(() => {
-    if (locationSubRef.current) {
-      locationSubRef.current.remove();
-      locationSubRef.current = null;
-    }
+    subscription.current?.remove();
+    subscription.current = null;
   }, []);
+
+  useEffect(() => stopWatching, [stopWatching]);
 
   const startWatching = useCallback(async () => {
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        setPermissionError('Permissão de localização foi negada.');
-        return;
-      }
-
-      setPermissionError(null);
-
-      // Pega posição inicial de alta precisão
-      const current = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      });
-
-      const initialPoint: RoutePoint = {
-        latitude: current.coords.latitude,
-        longitude: current.coords.longitude,
-        timestamp: current.timestamp,
-        altitude: current.coords.altitude,
-        speed: current.coords.speed,
-        accuracy: current.coords.accuracy,
-      };
-
-      dispatch({ type: 'ADD_POINT', point: initialPoint });
-
-      // Inicia observador contínuo
-      locationSubRef.current = await Location.watchPositionAsync(
-        {
-          accuracy: Location.Accuracy.BestForNavigation,
-          timeInterval: 2000,
-          distanceInterval: 4,
-        },
-        (loc) => {
-          const pt: RoutePoint = {
-            latitude: loc.coords.latitude,
-            longitude: loc.coords.longitude,
-            timestamp: loc.timestamp,
-            altitude: loc.coords.altitude,
-            speed: loc.coords.speed,
-            accuracy: loc.coords.accuracy,
-          };
-          dispatch({ type: 'ADD_POINT', point: pt });
-        },
-      );
-    } catch (err) {
-      console.warn('Erro ao acessar GPS:', err);
-    }
+    const sub = await Location.watchPositionAsync(
+      {
+        accuracy: Location.Accuracy.BestForNavigation,
+        timeInterval: 2000,
+        distanceInterval: 5,
+      },
+      (loc) =>
+        dispatch({
+          type: 'ADD_POINT',
+          now: loc.timestamp,
+          lat: loc.coords.latitude,
+          lng: loc.coords.longitude,
+        }),
+    );
+    subscription.current = sub;
   }, []);
 
-  const start = async () => {
-    dispatch({ type: 'START' });
+  const start = useCallback(async () => {
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== 'granted') {
+      setPermissionDenied(true);
+      return false;
+    }
+    setPermissionDenied(false);
+    dispatch({ type: 'START', now: Date.now() });
     await startWatching();
-  };
+    return true;
+  }, [startWatching]);
 
-  const pause = () => {
+  const pause = useCallback(() => {
     stopWatching();
-    dispatch({ type: 'PAUSE' });
-  };
-
-  const resume = async () => {
-    dispatch({ type: 'RESUME' });
-    await startWatching();
-  };
-
-  const finish = () => {
-    stopWatching();
-    dispatch({ type: 'FINISH' });
-  };
-
-  const reset = () => {
-    stopWatching();
-    dispatch({ type: 'RESET' });
-    setSeconds(0);
-  };
-
-  // Limpeza ao desmontar
-  useEffect(() => {
-    return () => {
-      stopWatching();
-    };
+    dispatch({ type: 'PAUSE', now: Date.now() });
   }, [stopWatching]);
 
-  const currentPace = averagePaceSecPerKm(seconds, state.distanceMeters);
-  const currentCalories = estimateCalories(state.distanceMeters, seconds);
+  const resume = useCallback(async () => {
+    dispatch({ type: 'RESUME', now: Date.now() });
+    await startWatching();
+  }, [startWatching]);
+
+  // Encerra a corrida e devolve os dados prontos para salvar no Supabase.
+  const finish = useCallback(
+    (spotifyTrackName: string | null): SaveRunInput | null => {
+      stopWatching();
+      const at = Date.now();
+      dispatch({ type: 'FINISH', now: at });
+      if (state.startedAt === null) return null;
+      return {
+        startedAt: new Date(state.startedAt).toISOString(),
+        endedAt: new Date(at).toISOString(),
+        distanceMeters: state.distanceMeters,
+        durationSeconds: Math.round(
+          elapsedSeconds({ ...state, status: 'finished', finishedAt: at }, at),
+        ),
+        route: simplifyRoute(state.route),
+        spotifyTrackName,
+      };
+    },
+    [state, stopWatching],
+  );
+
+  const reset = useCallback(() => {
+    stopWatching();
+    dispatch({ type: 'RESET' });
+  }, [stopWatching]);
+
+  const seconds = elapsedSeconds(state, now);
 
   return {
     status: state.status,
-    points: state.points,
+    route: state.route,
     distanceMeters: state.distanceMeters,
-    seconds,
-    currentPace,
-    calories: currentCalories,
-    startedAt: state.startedAt,
-    endedAt: state.endedAt,
-    permissionError,
+    elapsedSeconds: seconds,
+    pace: averagePaceSecPerKm(state.distanceMeters, seconds),
+    permissionDenied,
     start,
     pause,
     resume,

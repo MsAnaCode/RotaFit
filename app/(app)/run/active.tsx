@@ -1,66 +1,67 @@
-import React, { useEffect, useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  Alert,
-  TextInput,
-  Modal,
-  Dimensions,
-} from 'react-native';
-import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Screen } from '@/components/Screen';
-import { GlassSurface } from '@/components/glass/GlassSurface';
-import { Button } from '@/components/Button';
+import { useRouter } from 'expo-router';
+import { useState } from 'react';
+import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { GlassSurface, glassShadow } from '@/components/glass/GlassSurface';
 import { RoutePath } from '@/components/RoutePath';
 import { SpotifyPlayerCard } from '@/components/spotify/SpotifyPlayerCard';
+import { useNowPlaying } from '@/hooks/useSpotifyPlayer';
 import { useRunTracker } from '@/hooks/useRunTracker';
 import { useSaveRun } from '@/hooks/useRuns';
-import { useSpotifyPlayer } from '@/hooks/useSpotifyPlayer';
-import { useTheme } from '@/theme';
+import { radius, spacing, useTheme } from '@/theme';
+import { friendlyError } from '@/utils/errors';
 import { formatDistance, formatDuration, formatPace } from '@/utils/geo';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-
+// Tela cheia (sem abas), porque a corrida precisa da atenção do usuário: o
+// mapa e os números ocupam o centro, e Pausar/Retomar/Finalizar ficam sempre
+// visíveis, em vidro, por cima do traçado.
 export default function ActiveRunScreen() {
+  const { theme } = useTheme();
   const router = useRouter();
-  const { theme, isDark } = useTheme();
   const tracker = useRunTracker();
-  const saveRunMutation = useSaveRun();
-  const { track: currentSpotifyTrack } = useSpotifyPlayer();
+  const saveRun = useSaveRun();
+  const { data: nowPlaying } = useNowPlaying();
+  const [starting, setStarting] = useState(false);
 
-  const [isFinishModalVisible, setIsFinishModalVisible] = useState(false);
-  const [runTitle, setRunTitle] = useState('Corrida RotaFit');
+  async function handleStart() {
+    setStarting(true);
+    const ok = await tracker.start();
+    setStarting(false);
+    if (!ok) {
+      Alert.alert(
+        'Permissão de localização necessária',
+        'O RotaFit precisa da sua localização para registrar a rota da corrida. ' +
+          'Ative a permissão nas configurações do aparelho.',
+      );
+    }
+  }
 
-  // Inicia rastreamento automático ao abrir a tela
-  useEffect(() => {
-    tracker.start();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const handlePause = () => {
-    tracker.pause();
-  };
-
-  const handleResume = () => {
-    tracker.resume();
-  };
-
-  const handleFinishPrompt = () => {
-    tracker.finish();
-    const now = new Date();
-    const hours = now.getHours();
-    let period = 'Corrida Noturna';
-    if (hours >= 5 && hours < 12) period = 'Corrida Matinal';
-    else if (hours >= 12 && hours < 18) period = 'Corrida da Tarde';
-    setRunTitle(period);
-    setIsFinishModalVisible(true);
-  };
-
-  const handleCancelRun = () => {
-    Alert.alert('Descartar corrida?', 'Esta atividade não será salva no seu histórico.', [
+  function handleFinish() {
+    Alert.alert('Finalizar corrida', 'Deseja encerrar e salvar esta corrida?', [
       { text: 'Continuar correndo', style: 'cancel' },
+      {
+        text: 'Finalizar',
+        style: 'destructive',
+        onPress: () => {
+          const input = tracker.finish(
+            nowPlaying?.name ? `${nowPlaying.name} — ${nowPlaying.artist}` : null,
+          );
+          if (!input || input.distanceMeters === 0) {
+            router.back();
+            return;
+          }
+          saveRun.mutate(input, {
+            onSuccess: (id) => router.replace(`/run/${id}`),
+            onError: (e) => Alert.alert('Não foi possível salvar', friendlyError(e)),
+          });
+        },
+      },
+    ]);
+  }
+
+  function handleDiscard() {
+    Alert.alert('Descartar corrida', 'Os dados desta corrida serão perdidos.', [
+      { text: 'Cancelar', style: 'cancel' },
       {
         text: 'Descartar',
         style: 'destructive',
@@ -70,357 +71,161 @@ export default function ActiveRunScreen() {
         },
       },
     ]);
-  };
+  }
 
-  const handleConfirmSave = async () => {
-    try {
-      const saved = await saveRunMutation.mutateAsync({
-        title: runTitle.trim() || 'Corrida RotaFit',
-        started_at: new Date(tracker.startedAt || Date.now()).toISOString(),
-        ended_at: new Date(tracker.endedAt || Date.now()).toISOString(),
-        duration_seconds: tracker.seconds,
-        distance_meters: tracker.distanceMeters,
-        avg_pace_seconds_per_km: tracker.currentPace,
-        calories: tracker.calories,
-        route_points: tracker.points,
-        spotify_track_uri: currentSpotifyTrack?.uri || null,
-        spotify_track_name: currentSpotifyTrack?.name || null,
-        spotify_artist_name: currentSpotifyTrack?.artist || null,
-      });
-
-      setIsFinishModalVisible(false);
-      tracker.reset();
-      router.replace(`/(app)/run/${saved.id}`);
-    } catch (err) {
-      Alert.alert('Erro ao salvar', 'Não foi possível salvar a corrida no momento.');
-    }
-  };
+  if (tracker.status === 'idle') {
+    return (
+      <View style={[styles.center, { backgroundColor: theme.background }]}>
+        <Ionicons name="walk" size={64} color={theme.primary} />
+        <Text style={[styles.readyTitle, { color: theme.text }]}>
+          Pronto para começar?
+        </Text>
+        <Text style={[styles.readyText, { color: theme.muted }]}>
+          Vamos usar sua localização para acompanhar a rota, a distância e o ritmo em
+          tempo real.
+        </Text>
+        <Pressable
+          accessibilityRole="button"
+          onPress={handleStart}
+          disabled={starting}
+          style={styles.startWrap}
+        >
+          <GlassSurface
+            tint={theme.primary}
+            radius={radius.pill}
+            style={[styles.startBtn, glassShadow(theme.primary)]}
+          >
+            <Text style={[styles.startText, { color: theme.onPrimary }]}>
+              {starting ? 'Localizando...' : 'Começar corrida'}
+            </Text>
+          </GlassSurface>
+        </Pressable>
+        <Pressable accessibilityRole="button" onPress={() => router.back()}>
+          <Text style={[styles.cancel, { color: theme.muted }]}>Cancelar</Text>
+        </Pressable>
+      </View>
+    );
+  }
 
   return (
-    <Screen edges={['top', 'bottom']}>
-      <View style={styles.container}>
-        {/* Header superior com botão fechar / descartar */}
-        <View style={styles.topBar}>
-          <Button
-            title=""
-            variant="ghost"
-            onPress={handleCancelRun}
-            icon={<Ionicons name="close" size={26} color={theme.colors.text} />}
-            style={styles.closeBtn}
-          />
+    <View style={[styles.screen, { backgroundColor: theme.background }]}>
+      <RoutePath route={tracker.route} height={280} live />
 
-          <View style={styles.statusBadge}>
-            <View
-              style={[
-                styles.statusDot,
-                {
-                  backgroundColor:
-                    tracker.status === 'running'
-                      ? '#10B981'
-                      : tracker.status === 'paused'
-                        ? theme.colors.accent
-                        : theme.colors.primary,
-                },
-              ]}
-            />
-            <Text style={[styles.statusText, { color: theme.colors.text }]}>
-              {tracker.status === 'running'
-                ? 'EM ANDAMENTO'
-                : tracker.status === 'paused'
-                  ? 'PAUSADO'
-                  : 'FINALIZADO'}
-            </Text>
-          </View>
-
-          <View style={{ width: 40 }} />
-        </View>
-
-        {/* Visualização da rota em SVG */}
-        <View style={styles.mapContainer}>
-          <RoutePath
-            points={tracker.points}
-            width={SCREEN_WIDTH - 40}
-            height={220}
-            strokeWidth={4}
-            showPins={true}
-          />
-        </View>
-
-        {/* Bloco de Métricas Principais em Liquid Glass */}
-        <GlassSurface style={styles.metricsCard} glow>
-          {/* Distância */}
-          <View style={styles.mainMetricRow}>
-            <Text style={[styles.mainMetricValue, { color: theme.colors.primary }]}>
-              {formatDistance(tracker.distanceMeters)}
-            </Text>
-            <Text style={[styles.mainMetricLabel, { color: theme.colors.textSecondary }]}>
-              DISTÂNCIA TOTAL
-            </Text>
-          </View>
-
-          <View
-            style={[styles.metricsDivider, { backgroundColor: theme.colors.cardBorder }]}
-          />
-
-          {/* Duração, Ritmo e Calorias */}
-          <View style={styles.secondaryMetricsRow}>
-            <View style={styles.subMetricItem}>
-              <Text style={[styles.subMetricValue, { color: theme.colors.text }]}>
-                {formatDuration(tracker.seconds)}
-              </Text>
-              <Text
-                style={[styles.subMetricLabel, { color: theme.colors.textSecondary }]}
-              >
-                TEMPO
-              </Text>
-            </View>
-
-            <View style={styles.subMetricItem}>
-              <Text style={[styles.subMetricValue, { color: theme.colors.text }]}>
-                {formatPace(tracker.currentPace).replace(' /km', '')}
-              </Text>
-              <Text
-                style={[styles.subMetricLabel, { color: theme.colors.textSecondary }]}
-              >
-                RITMO (MIN/KM)
-              </Text>
-            </View>
-
-            <View style={styles.subMetricItem}>
-              <Text style={[styles.subMetricValue, { color: theme.colors.accent }]}>
-                {tracker.calories}
-              </Text>
-              <Text
-                style={[styles.subMetricLabel, { color: theme.colors.textSecondary }]}
-              >
-                KCAL
-              </Text>
-            </View>
+      <View style={styles.stats}>
+        <GlassSurface radius={radius.lg} style={styles.statsCard} intensity={30}>
+          <Stat label="Distância" value={formatDistance(tracker.distanceMeters)} big />
+          <View style={styles.statsRow}>
+            <Stat label="Tempo" value={formatDuration(tracker.elapsedSeconds)} />
+            <Stat label="Ritmo" value={formatPace(tracker.pace)} />
           </View>
         </GlassSurface>
 
-        {/* Tocador Spotify integrado na corrida */}
-        <View style={styles.spotifySection}>
-          <SpotifyPlayerCard />
-        </View>
+        <SpotifyPlayerCard />
 
-        {/* Controles de Corrida (Pausar, Retomar, Concluir) */}
-        <View style={styles.actionsBar}>
-          {tracker.status === 'running' ? (
-            <Button
-              title="PAUSAR CORRIDA"
-              variant="secondary"
-              size="lg"
-              onPress={handlePause}
-              icon={<Ionicons name="pause" size={22} color={theme.colors.text} />}
-              style={styles.actionButton}
+        <View style={styles.controls}>
+          {tracker.status === 'active' ? (
+            <ControlButton
+              icon="pause"
+              label="Pausar"
+              onPress={tracker.pause}
+              tint={theme.primary}
             />
           ) : (
-            <View style={styles.pausedButtonsRow}>
-              <Button
-                title="RETOMAR"
-                variant="primary"
-                size="lg"
-                onPress={handleResume}
-                icon={<Ionicons name="play" size={22} color="#FFFFFF" />}
-                style={styles.halfButton}
-              />
-              <Button
-                title="FINALIZAR"
-                variant="dark"
-                size="lg"
-                onPress={handleFinishPrompt}
-                icon={<Ionicons name="checkmark-done" size={22} color="#FFFFFF" />}
-                style={styles.halfButton}
-              />
-            </View>
-          )}
-        </View>
-      </View>
-
-      {/* Modal de Conclusão e Salvamento */}
-      <Modal visible={isFinishModalVisible} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <GlassSurface style={styles.modalCard} glow>
-            <View style={styles.modalHeader}>
-              <Ionicons name="trophy-outline" size={36} color={theme.colors.primary} />
-              <Text style={[styles.modalTitle, { color: theme.colors.text }]}>
-                Corrida Concluída! 🎉
-              </Text>
-            </View>
-
-            <Text style={[styles.modalSubtitle, { color: theme.colors.textSecondary }]}>
-              Excelente treino! Dê um título para salvar no seu histórico.
-            </Text>
-
-            <TextInput
-              value={runTitle}
-              onChangeText={setRunTitle}
-              placeholder="Ex: Treino no Parque"
-              placeholderTextColor={theme.colors.textMuted}
-              style={[
-                styles.textInput,
-                {
-                  color: theme.colors.text,
-                  borderColor: theme.colors.cardBorder,
-                  backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)',
-                },
-              ]}
+            <ControlButton
+              icon="play"
+              label="Retomar"
+              onPress={tracker.resume}
+              tint={theme.primary}
             />
-
-            <View style={styles.modalActions}>
-              <Button
-                title="Salvar Treino"
-                variant="primary"
-                onPress={handleConfirmSave}
-                loading={saveRunMutation.isPending}
-                style={{ width: '100%' }}
-              />
-            </View>
-          </GlassSurface>
+          )}
+          <ControlButton
+            icon="stop"
+            label="Finalizar"
+            onPress={handleFinish}
+            tint={theme.danger}
+          />
         </View>
-      </Modal>
-    </Screen>
+        <Pressable accessibilityRole="button" onPress={handleDiscard}>
+          <Text style={[styles.discard, { color: theme.muted }]}>Descartar corrida</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+function Stat({ label, value, big }: { label: string; value: string; big?: boolean }) {
+  const { theme } = useTheme();
+  return (
+    <View style={styles.stat}>
+      <Text style={[big ? styles.statBig : styles.statValue, { color: theme.text }]}>
+        {value}
+      </Text>
+      <Text style={[styles.statLabel, { color: theme.muted }]}>{label}</Text>
+    </View>
+  );
+}
+
+function ControlButton({
+  icon,
+  label,
+  onPress,
+  tint,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  onPress: () => void;
+  tint: string;
+}) {
+  const { theme } = useTheme();
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      onPress={onPress}
+      style={styles.controlWrap}
+    >
+      <GlassSurface
+        tint={tint}
+        radius={radius.pill}
+        style={[styles.controlBtn, glassShadow(tint)]}
+      >
+        <Ionicons name={icon} size={28} color={theme.onPrimary} />
+      </GlassSurface>
+      <Text style={[styles.controlLabel, { color: theme.text }]}>{label}</Text>
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  center: {
     flex: 1,
-    paddingHorizontal: 20,
-    justifyContent: 'space-between',
-    paddingBottom: 16,
-  },
-  topBar: {
-    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingTop: 8,
-  },
-  closeBtn: {
-    width: 40,
-    height: 40,
-  },
-  statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    backgroundColor: 'rgba(0,0,0,0.06)',
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 6,
-  },
-  statusText: {
-    fontSize: 12,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  mapContainer: {
-    alignItems: 'center',
-    marginVertical: 12,
-  },
-  metricsCard: {
-    padding: 18,
-    borderRadius: 20,
-  },
-  mainMetricRow: {
-    alignItems: 'center',
-    paddingBottom: 12,
-  },
-  mainMetricValue: {
-    fontSize: 42,
-    fontWeight: '900',
-    letterSpacing: -0.5,
-  },
-  mainMetricLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 1,
-    marginTop: 2,
-  },
-  metricsDivider: {
-    height: 1,
-    marginVertical: 10,
-  },
-  secondaryMetricsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'center',
-  },
-  subMetricItem: {
-    alignItems: 'center',
-    flex: 1,
-  },
-  subMetricValue: {
-    fontSize: 22,
-    fontWeight: '800',
-  },
-  subMetricLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-    marginTop: 4,
-  },
-  spotifySection: {
-    marginVertical: 4,
-  },
-  actionsBar: {
-    marginTop: 8,
-  },
-  actionButton: {
-    width: '100%',
-  },
-  pausedButtonsRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  halfButton: {
-    flex: 1,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.65)',
     justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
+    padding: spacing.xl,
+    gap: spacing.md,
   },
-  modalCard: {
-    width: '100%',
-    maxWidth: 380,
-    padding: 24,
-    borderRadius: 24,
-    alignItems: 'center',
+  readyTitle: { fontSize: 24, fontWeight: '800', marginTop: spacing.md },
+  readyText: { fontSize: 15, textAlign: 'center' },
+  startWrap: { marginTop: spacing.lg, alignSelf: 'stretch' },
+  startBtn: { minHeight: 56, alignItems: 'center', justifyContent: 'center' },
+  startText: { fontSize: 17, fontWeight: '800' },
+  cancel: { marginTop: spacing.md, fontSize: 15 },
+  screen: { flex: 1 },
+  stats: { padding: spacing.md, gap: spacing.md, marginTop: -40 },
+  statsCard: { padding: spacing.lg, gap: spacing.sm },
+  statsRow: { flexDirection: 'row', justifyContent: 'space-around' },
+  stat: { alignItems: 'center' },
+  statBig: { fontSize: 44, fontWeight: '800', textAlign: 'center' },
+  statValue: { fontSize: 22, fontWeight: '800' },
+  statLabel: { fontSize: 12, marginTop: 2 },
+  controls: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: spacing.xl,
+    marginTop: spacing.sm,
   },
-  modalHeader: {
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  modalTitle: {
-    fontSize: 22,
-    fontWeight: '900',
-    marginTop: 8,
-  },
-  modalSubtitle: {
-    fontSize: 13,
-    textAlign: 'center',
-    lineHeight: 18,
-    marginBottom: 18,
-  },
-  textInput: {
-    width: '100%',
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    fontSize: 16,
-    marginBottom: 20,
-  },
-  modalActions: {
-    width: '100%',
-  },
+  controlWrap: { alignItems: 'center', gap: 6 },
+  controlBtn: { width: 64, height: 64, alignItems: 'center', justifyContent: 'center' },
+  controlLabel: { fontSize: 13, fontWeight: '600' },
+  discard: { textAlign: 'center', marginTop: spacing.sm, fontSize: 14 },
 });

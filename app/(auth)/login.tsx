@@ -1,212 +1,115 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, Image } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Screen } from '@/components/Screen';
-import { GlassSurface } from '@/components/glass/GlassSurface';
-import { Button } from '@/components/Button';
+import { useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { GlassSurface, glassShadow } from '@/components/glass/GlassSurface';
 import { GoogleIcon } from '@/components/GoogleIcon';
+import { Screen } from '@/components/Screen';
 import { useAuth } from '@/context/AuthContext';
-import { useTheme } from '@/theme';
-import { getErrorMessage } from '@/utils/errors';
+import { radius, spacing, useTheme } from '@/theme';
+import { friendlyError } from '@/utils/errors';
 
+// Login único, pelo Google. Sem formulário de e-mail e senha: o Supabase
+// cuida de toda a troca com o Google, e o app só recebe a sessão pronta.
 export default function LoginScreen() {
-  const { signInWithGoogle, signInAsDemoUser } = useAuth();
-  const { theme, isDark } = useTheme();
-  const [loadingGoogle, setLoadingGoogle] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const { theme } = useTheme();
+  const { signInWithGoogle } = useAuth();
+  const [loading, setLoading] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
-  const handleGoogleLogin = async () => {
-    setErrorMsg(null);
-    setLoadingGoogle(true);
+  async function handlePress() {
+    setFormError(null);
+    setLoading(true);
     try {
       await signInWithGoogle();
-    } catch (err) {
-      setErrorMsg(getErrorMessage(err));
+      // Com sessão, o guarda de rota redireciona sozinho.
+    } catch (error) {
+      setFormError(friendlyError(error));
     } finally {
-      setLoadingGoogle(false);
+      setLoading(false);
     }
-  };
-
-  const handleDemoLogin = async () => {
-    setErrorMsg(null);
-    await signInAsDemoUser();
-  };
+  }
 
   return (
-    <Screen style={styles.screen} contentContainerStyle={styles.container}>
-      <View style={styles.brandContainer}>
-        <View
-          style={[
-            styles.logoBadge,
-            {
-              backgroundColor: theme.colors.primary,
-              shadowColor: theme.colors.primary,
-            },
-          ]}
-        >
-          <Ionicons name="flame" size={44} color="#FFFFFF" />
-        </View>
-        <Text style={[styles.brandTitle, { color: theme.colors.text }]}>RotaFit</Text>
-        <Text style={[styles.brandSubtitle, { color: theme.colors.textSecondary }]}>
-          Rastreamento de corrida em tempo real com trilha sonora integrada
-        </Text>
-      </View>
-
-      <GlassSurface style={styles.card} borderRadius={theme.radius.lg} glow>
-        <Text style={[styles.cardTitle, { color: theme.colors.text }]}>Bem-vindo</Text>
-        <Text style={[styles.cardDesc, { color: theme.colors.textSecondary }]}>
-          Acesse para sincronizar suas rotas, ritmo e progresso semanal na nuvem.
+    <Screen>
+      <View style={styles.center}>
+        <Ionicons name="walk" size={64} color={theme.primary} />
+        <Text style={[styles.title, { color: theme.text }]}>RotaFit</Text>
+        <Text style={[styles.subtitle, { color: theme.muted }]}>
+          Sua corrida, sua trilha sonora
         </Text>
 
-        {errorMsg ? (
-          <View
-            style={[
-              styles.errorBox,
-              {
-                backgroundColor: isDark
-                  ? 'rgba(220, 38, 38, 0.2)'
-                  : 'rgba(220, 38, 38, 0.1)',
-                borderColor: theme.colors.danger,
-              },
-            ]}
-          >
-            <Ionicons
-              name="alert-circle"
-              size={18}
-              color={theme.colors.danger}
-              style={{ marginRight: 6 }}
-            />
-            <Text style={[styles.errorText, { color: theme.colors.danger }]}>
-              {errorMsg}
-            </Text>
-          </View>
+        {formError ? (
+          <Text style={[styles.error, { color: theme.danger }]}>{formError}</Text>
         ) : null}
 
-        <Button
-          title="Entrar com Google"
-          variant="secondary"
-          onPress={handleGoogleLogin}
-          loading={loadingGoogle}
-          icon={<GoogleIcon size={20} />}
-          style={styles.googleBtn}
-        />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ disabled: loading }}
+          disabled={loading}
+          onPress={handlePress}
+          style={({ pressed }) => [styles.buttonWrap, pressed && styles.pressed]}
+        >
+          <GlassSurface
+            tint="#050505"
+            radius={radius.pill}
+            style={[styles.button, glassShadow(theme.primary)]}
+            intensity={60}
+          >
+            <View style={styles.buttonContent}>
+              <View style={styles.googleIcon}>
+                <GoogleIcon size={20} />
+              </View>
+              <Text style={styles.buttonText}>
+                {loading ? 'Entrando...' : 'Continuar com Google'}
+              </Text>
+            </View>
+          </GlassSurface>
+        </Pressable>
 
-        <View style={styles.dividerRow}>
-          <View
-            style={[styles.dividerLine, { backgroundColor: theme.colors.cardBorder }]}
-          />
-          <Text style={[styles.dividerText, { color: theme.colors.textMuted }]}>OU</Text>
-          <View
-            style={[styles.dividerLine, { backgroundColor: theme.colors.cardBorder }]}
-          />
-        </View>
-
-        <Button
-          title="Continuar como Visitante"
-          variant="ghost"
-          onPress={handleDemoLogin}
-          icon={
-            <Ionicons
-              name="person-circle-outline"
-              size={20}
-              color={theme.colors.textSecondary}
-            />
-          }
-        />
-      </GlassSurface>
-
-      <Text style={[styles.disclaimer, { color: theme.colors.textMuted }]}>
-        OAuth 2.0 PKCE seguro • Sem senhas no dispositivo
-      </Text>
+        <Text style={[styles.note, { color: theme.muted }]}>
+          Usamos sua conta do Google só para identificar você. Suas corridas ficam
+          vinculadas a essa conta.
+        </Text>
+      </View>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: {
-    justifyContent: 'center',
-  },
-  container: {
+  center: {
     flex: 1,
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 24,
-    paddingVertical: 36,
-  },
-  brandContainer: {
-    alignItems: 'center',
-    marginTop: 40,
-  },
-  logoBadge: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 16,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.45,
-    shadowRadius: 16,
-    elevation: 8,
+    padding: spacing.xl,
+    gap: spacing.md,
   },
-  brandTitle: {
-    fontSize: 34,
-    fontWeight: '900',
-    letterSpacing: 0.5,
-  },
-  brandSubtitle: {
-    fontSize: 14,
-    textAlign: 'center',
-    marginTop: 8,
-    maxWidth: 290,
-    lineHeight: 20,
-  },
-  card: {
-    width: '100%',
-    maxWidth: 380,
-    padding: 24,
-  },
-  cardTitle: {
-    fontSize: 20,
-    fontWeight: '800',
-    marginBottom: 6,
-  },
-  cardDesc: {
-    fontSize: 13,
-    lineHeight: 18,
-    marginBottom: 20,
-  },
-  errorBox: {
+  title: { fontSize: 32, fontWeight: '800', marginTop: spacing.sm },
+  subtitle: { fontSize: 15, marginBottom: spacing.lg },
+  error: { textAlign: 'center', marginBottom: spacing.sm },
+  buttonWrap: { alignSelf: 'stretch' },
+  pressed: { opacity: 0.85 },
+  button: { minHeight: 56 },
+  buttonContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    marginBottom: 16,
+    justifyContent: 'center',
+    gap: spacing.sm,
+    minHeight: 56,
+    paddingHorizontal: spacing.lg,
   },
-  errorText: {
+  googleIcon: {
+    width: 20,
+    height: 20,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  buttonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
+  note: {
     fontSize: 12,
-    flex: 1,
-  },
-  googleBtn: {
-    marginBottom: 12,
-  },
-  dividerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: 10,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-  },
-  dividerText: {
-    marginHorizontal: 12,
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  disclaimer: {
-    fontSize: 11,
     textAlign: 'center',
+    marginTop: spacing.lg,
+    paddingHorizontal: spacing.md,
   },
 });

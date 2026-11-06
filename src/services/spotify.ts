@@ -1,131 +1,58 @@
-import { SpotifyPlaybackState, SpotifyTrack } from '@/types';
+import type { SpotifyTrack } from '@/types';
 
-const SPOTIFY_API_BASE = 'https://api.spotify.com/v1';
+const BASE = 'https://api.spotify.com/v1';
 
-const DEMO_PLAYLIST: SpotifyTrack[] = [
-  {
-    id: 'demo-track-1',
-    name: 'Canção do Corredor (Speed Mix)',
-    artist: 'RotaFit Beats',
-    album: 'Treino de Rua Vol. 1',
-    albumCoverUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300',
-    uri: 'spotify:track:demo1',
-    durationMs: 215000,
-    isPlaying: true,
-    progressMs: 45000,
-  },
-  {
-    id: 'demo-track-2',
-    name: 'Ritmo Constante (170 BPM)',
-    artist: 'Marathon Beats',
-    album: 'Frequência Cardíaca',
-    albumCoverUrl: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300',
-    uri: 'spotify:track:demo2',
-    durationMs: 198000,
-    isPlaying: true,
-    progressMs: 12000,
-  },
-];
-
-let demoCurrentIndex = 0;
-let demoIsPlaying = true;
-
-export async function fetchCurrentlyPlaying(
-  accessToken: string,
-): Promise<SpotifyPlaybackState> {
-  if (accessToken === 'demo-spotify-access-token') {
-    const track = {
-      ...DEMO_PLAYLIST[demoCurrentIndex],
-      isPlaying: demoIsPlaying,
-    };
-    return {
-      track,
-      isPlaying: demoIsPlaying,
-      deviceActive: true,
-    };
+export class SpotifyApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
   }
+}
 
-  const response = await fetch(`${SPOTIFY_API_BASE}/me/player`, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
+async function call(accessToken: string, path: string, init: RequestInit = {}) {
+  const res = await fetch(`${BASE}${path}`, {
+    ...init,
+    headers: { Authorization: `Bearer ${accessToken}`, ...(init.headers ?? {}) },
   });
-
-  if (response.status === 204 || response.status === 404) {
-    return { track: null, isPlaying: false, deviceActive: false };
+  if (res.status === 204 || res.status === 202) return null;
+  if (res.status === 404) {
+    // Sem dispositivo ativo: o usuário precisa abrir o Spotify e tocar algo antes.
+    throw new SpotifyApiError(
+      404,
+      'Abra o Spotify e toque uma música antes de controlar por aqui.',
+    );
   }
-
-  if (!response.ok) {
-    return { track: null, isPlaying: false, deviceActive: false };
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new SpotifyApiError(
+      res.status,
+      body?.error?.message ?? 'Não foi possível falar com o Spotify.',
+    );
   }
+  return res.status === 200 ? res.json() : null;
+}
 
-  const data = await response.json();
-  const item = data.item;
-
-  if (!item) {
-    return { track: null, isPlaying: false, deviceActive: true };
-  }
-
-  const track: SpotifyTrack = {
-    id: item.id,
-    name: item.name,
-    artist: item.artists?.map((a: { name: string }) => a.name).join(', ') ?? '',
-    album: item.album?.name ?? '',
-    albumCoverUrl: item.album?.images?.[0]?.url ?? null,
-    uri: item.uri,
-    durationMs: item.duration_ms ?? 0,
-    isPlaying: data.is_playing ?? false,
-    progressMs: data.progress_ms ?? 0,
-  };
-
+// O que está tocando agora (ou null se nada estiver tocando).
+export async function getNowPlaying(accessToken: string): Promise<SpotifyTrack | null> {
+  const data = await call(accessToken, '/me/player/currently-playing');
+  if (!data || !data.item) return null;
   return {
-    track,
-    isPlaying: data.is_playing ?? false,
-    deviceActive: true,
+    id: data.item.id,
+    name: data.item.name,
+    artist: (data.item.artists ?? []).map((a: { name: string }) => a.name).join(', '),
+    albumArt: data.item.album?.images?.[0]?.url ?? null,
+    isPlaying: Boolean(data.is_playing),
+    progressMs: data.progress_ms ?? 0,
+    durationMs: data.item.duration_ms ?? 0,
   };
 }
 
-export async function pausePlayback(accessToken: string): Promise<void> {
-  if (accessToken === 'demo-spotify-access-token') {
-    demoIsPlaying = false;
-    return;
-  }
-  await fetch(`${SPOTIFY_API_BASE}/me/player/pause`, {
-    method: 'PUT',
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-}
-
-export async function resumePlayback(accessToken: string): Promise<void> {
-  if (accessToken === 'demo-spotify-access-token') {
-    demoIsPlaying = true;
-    return;
-  }
-  await fetch(`${SPOTIFY_API_BASE}/me/player/play`, {
-    method: 'PUT',
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-}
-
-export async function skipToNext(accessToken: string): Promise<void> {
-  if (accessToken === 'demo-spotify-access-token') {
-    demoCurrentIndex = (demoCurrentIndex + 1) % DEMO_PLAYLIST.length;
-    return;
-  }
-  await fetch(`${SPOTIFY_API_BASE}/me/player/next`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-}
-
-export async function skipToPrevious(accessToken: string): Promise<void> {
-  if (accessToken === 'demo-spotify-access-token') {
-    demoCurrentIndex =
-      (demoCurrentIndex - 1 + DEMO_PLAYLIST.length) % DEMO_PLAYLIST.length;
-    return;
-  }
-  await fetch(`${SPOTIFY_API_BASE}/me/player/previous`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-}
+export const pausePlayback = (accessToken: string) =>
+  call(accessToken, '/me/player/pause', { method: 'PUT' });
+export const resumePlayback = (accessToken: string) =>
+  call(accessToken, '/me/player/play', { method: 'PUT' });
+export const skipNext = (accessToken: string) =>
+  call(accessToken, '/me/player/next', { method: 'POST' });
+export const skipPrevious = (accessToken: string) =>
+  call(accessToken, '/me/player/previous', { method: 'POST' });

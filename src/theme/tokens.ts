@@ -1,137 +1,65 @@
+// Paletas do RotaFit. "light" usa Milano Red + Lemon Chiffon; "dark" é inspirado
+// no Flamengo (rubro-negro). Os dois alimentam o estilo Liquid Glass: cada
+// superfície de vidro é a cor "glass" com transparência, mais um brilho no topo.
 export interface ThemeTokens {
   mode: 'light' | 'dark';
-  colors: {
-    bgStart: string;
-    bgEnd: string;
-    text: string;
-    textSecondary: string;
-    textMuted: string;
-    primary: string;
-    primaryGlow: string;
-    accent: string;
-    accentGlow: string;
-    danger: string;
-    dangerGlow: string;
-    cardBg: string;
-    cardBorder: string;
-    highlight: string;
-    tabBarBg: string;
-    tabBarBorder: string;
-    tabBarActive: string;
-    tabBarInactive: string;
-    mapBg: string;
-    mapRoute: string;
-    mapDot: string;
-  };
-  spacing: {
-    xs: number;
-    sm: number;
-    md: number;
-    lg: number;
-    xl: number;
-    xxl: number;
-  };
-  radius: {
-    sm: number;
-    md: number;
-    lg: number;
-    pill: number;
-  };
-  blur: {
-    card: number;
-    tabBar: number;
-    modal: number;
-  };
+  background: string;
+  backgroundAlt: string;
+  surface: string;
+  glass: string; // cor de base do vidro (recebe opacidade no componente)
+  glassBorder: string;
+  glassHighlight: string; // brilho no topo do vidro
+  text: string;
+  muted: string;
+  primary: string; // Milano Red nos dois temas
+  primarySoft: string;
+  secondary: string; // Lemon Chiffon (claro) / vermelho vivo (escuro)
+  onPrimary: string;
+  border: string;
+  success: string;
+  danger: string;
+  statusBar: 'dark' | 'light';
 }
 
 export const lightTheme: ThemeTokens = {
   mode: 'light',
-  colors: {
-    bgStart: '#FFF9E6',
-    bgEnd: '#FFF3BF',
-    text: '#201815',
-    textSecondary: '#6F5C54',
-    textMuted: '#9E887E',
-    primary: '#B81104',
-    primaryGlow: 'rgba(184, 17, 4, 0.35)',
-    accent: '#D97706',
-    accentGlow: 'rgba(217, 119, 6, 0.30)',
-    danger: '#DC2626',
-    dangerGlow: 'rgba(220, 38, 38, 0.35)',
-    cardBg: 'rgba(255, 255, 255, 0.65)',
-    cardBorder: 'rgba(184, 17, 4, 0.20)',
-    highlight: 'rgba(255, 255, 255, 0.70)',
-    tabBarBg: 'rgba(255, 250, 205, 0.75)',
-    tabBarBorder: 'rgba(184, 17, 4, 0.15)',
-    tabBarActive: '#B81104',
-    tabBarInactive: '#9E887E',
-    mapBg: 'rgba(255, 255, 255, 0.40)',
-    mapRoute: '#B81104',
-    mapDot: '#201815',
-  },
-  spacing: {
-    xs: 4,
-    sm: 8,
-    md: 16,
-    lg: 24,
-    xl: 32,
-    xxl: 48,
-  },
-  radius: {
-    sm: 8,
-    md: 14,
-    lg: 22,
-    pill: 9999,
-  },
-  blur: {
-    card: 20,
-    tabBar: 30,
-    modal: 40,
-  },
+  background: '#FFFACD', // Lemon Chiffon
+  backgroundAlt: '#FFF6B8',
+  surface: '#FFFDF2',
+  glass: '#FFFFFF',
+  glassBorder: 'rgba(184, 17, 4, 0.22)',
+  glassHighlight: 'rgba(255, 255, 255, 0.75)',
+  text: '#3A0A03',
+  muted: '#8A5A3B',
+  primary: '#B81104', // Milano Red
+  primarySoft: '#F6D9CF',
+  secondary: '#FFFACD',
+  onPrimary: '#FFFDF2',
+  border: 'rgba(184, 17, 4, 0.16)',
+  success: '#1E7D32',
+  danger: '#B81104',
+  statusBar: 'dark',
 };
 
 export const darkTheme: ThemeTokens = {
   mode: 'dark',
-  colors: {
-    bgStart: '#0B0B0D',
-    bgEnd: '#1A0406',
-    text: '#FFFFFF',
-    textSecondary: '#D0A3A7',
-    textMuted: '#7D5F63',
-    primary: '#E6141E',
-    primaryGlow: 'rgba(230, 20, 30, 0.55)',
-    accent: '#B81104',
-    accentGlow: 'rgba(184, 17, 4, 0.40)',
-    danger: '#FF3B47',
-    dangerGlow: 'rgba(255, 59, 71, 0.50)',
-    cardBg: 'rgba(26, 4, 6, 0.50)',
-    cardBorder: 'rgba(230, 20, 30, 0.30)',
-    highlight: 'rgba(255, 255, 255, 0.25)',
-    tabBarBg: 'rgba(11, 11, 13, 0.75)',
-    tabBarBorder: 'rgba(230, 20, 30, 0.25)',
-    tabBarActive: '#E6141E',
-    tabBarInactive: '#7D5F63',
-    mapBg: 'rgba(11, 11, 13, 0.60)',
-    mapRoute: '#E6141E',
-    mapDot: '#FFFFFF',
-  },
-  spacing: {
-    xs: 4,
-    sm: 8,
-    md: 16,
-    lg: 24,
-    xl: 32,
-    xxl: 48,
-  },
-  radius: {
-    sm: 8,
-    md: 14,
-    lg: 22,
-    pill: 9999,
-  },
-  blur: {
-    card: 25,
-    tabBar: 35,
-    modal: 45,
-  },
+  background: '#0B0B0D', // preto Flamengo
+  backgroundAlt: '#151013',
+  surface: '#1A1114',
+  glass: '#1E1418',
+  glassBorder: 'rgba(230, 20, 30, 0.35)',
+  glassHighlight: 'rgba(255, 255, 255, 0.10)',
+  text: '#F5EDEE',
+  muted: '#B08C90',
+  primary: '#E6141E', // vermelho Flamengo
+  primarySoft: 'rgba(230, 20, 30, 0.18)',
+  secondary: '#111111',
+  onPrimary: '#FFFFFF',
+  border: 'rgba(255, 255, 255, 0.10)',
+  success: '#34D399',
+  danger: '#FF4D5E',
+  statusBar: 'light',
 };
+
+export const spacing = { xs: 4, sm: 8, md: 16, lg: 24, xl: 32 };
+export const radius = { sm: 10, md: 16, lg: 24, xl: 32, pill: 999 };

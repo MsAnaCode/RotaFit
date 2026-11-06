@@ -1,170 +1,95 @@
-import React from 'react';
-import {
-  TouchableOpacity,
-  Text,
-  ActivityIndicator,
-  StyleSheet,
-  ViewStyle,
-  TextStyle,
-  View,
-} from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
+import { ActivityIndicator, Pressable, StyleSheet, Text } from 'react-native';
+import type { StyleProp, ViewStyle } from 'react-native';
+import { GlassSurface, glassShadow } from '@/components/glass/GlassSurface';
 import { useTheme } from '@/theme';
+import { radius, spacing } from '@/theme';
 
-export type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'ghost' | 'dark';
+type Variant = 'primary' | 'secondary' | 'danger' | 'ghost' | 'dark';
 
-export interface ButtonProps {
+interface ButtonProps {
   title: string;
   onPress: () => void;
-  variant?: ButtonVariant;
-  disabled?: boolean;
+  variant?: Variant;
   loading?: boolean;
-  icon?: React.ReactNode;
-  style?: ViewStyle;
-  textStyle?: TextStyle;
-  size?: 'sm' | 'md' | 'lg';
+  disabled?: boolean;
+  style?: StyleProp<ViewStyle>;
 }
 
+// Botão em vidro líquido: uma cápsula translúcida com brilho no topo e um
+// "glow" colorido por baixo. A cor do vidro e do glow muda por variante.
 export function Button({
   title,
   onPress,
   variant = 'primary',
-  disabled = false,
   loading = false,
-  icon,
+  disabled = false,
   style,
-  textStyle,
-  size = 'md',
 }: ButtonProps) {
-  const { theme, isDark } = useTheme();
+  const { theme } = useTheme();
+  const inactive = disabled || loading;
 
-  const getColors = () => {
-    switch (variant) {
-      case 'primary':
-        return {
-          bg: [theme.colors.primary, isDark ? '#8A0B0F' : '#8A0B02'],
-          text: '#FFFFFF',
-          border: 'rgba(255, 255, 255, 0.25)',
-          glow: theme.colors.primaryGlow,
-        };
-      case 'secondary':
-        return {
-          bg: isDark
-            ? ['rgba(255,255,255,0.12)', 'rgba(255,255,255,0.04)']
-            : ['rgba(0,0,0,0.06)', 'rgba(0,0,0,0.02)'],
-          text: theme.colors.text,
-          border: theme.colors.cardBorder,
-          glow: 'transparent',
-        };
-      case 'danger':
-        return {
-          bg: [theme.colors.danger, '#8B0000'],
-          text: '#FFFFFF',
-          border: 'rgba(255, 255, 255, 0.3)',
-          glow: theme.colors.dangerGlow,
-        };
-      case 'ghost':
-        return {
-          bg: ['transparent', 'transparent'],
-          text: theme.colors.textSecondary,
-          border: 'transparent',
-          glow: 'transparent',
-        };
-      case 'dark':
-        return {
-          bg: ['#1F1F24', '#0A0A0C'],
-          text: '#FFFFFF',
-          border: 'rgba(255, 255, 255, 0.15)',
-          glow: 'rgba(0, 0, 0, 0.4)',
-        };
-    }
-  };
-
-  const config = getColors();
-
-  const sizePadding = {
-    sm: { paddingVertical: 8, paddingHorizontal: 14, fontSize: 13 },
-    md: { paddingVertical: 14, paddingHorizontal: 20, fontSize: 15 },
-    lg: { paddingVertical: 18, paddingHorizontal: 28, fontSize: 17 },
-  }[size];
+  const tint =
+    variant === 'primary'
+      ? theme.primary
+      : variant === 'danger'
+        ? theme.danger
+        : variant === 'dark'
+          ? '#050505'
+          : theme.glass;
+  const labelColor =
+    variant === 'primary' || variant === 'danger' || variant === 'dark'
+      ? theme.onPrimary
+      : variant === 'secondary'
+        ? theme.primary
+        : theme.muted;
+  const glow = variant === 'ghost' ? 'transparent' : tint;
+  // Botões de ação (primary/danger/dark) ficam bem saturados, para se
+  // destacarem como o toque principal da tela; secundário e cartões ficam
+  // mais translúcidos, para o "vidro" aparecer de verdade.
+  const solidOpacity = variant === 'ghost' ? 0.12 : variant === 'secondary' ? 0.6 : 0.94;
+  // Com a cor quase opaca, o desfoque por baixo só esmaece a cor (o véu claro
+  // do blur "light" do iOS, por exemplo) sem servir para nada: desligamos o
+  // blur nesses casos e deixamos só o brilho e a borda do vidro.
+  const solidIntensity =
+    variant === 'primary' || variant === 'danger' || variant === 'dark' ? 0 : 40;
 
   return (
-    <TouchableOpacity
-      activeOpacity={0.8}
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ disabled: inactive }}
       onPress={onPress}
-      disabled={disabled || loading}
-      style={[
-        styles.touchable,
-        {
-          borderRadius: theme.radius.pill,
-          opacity: disabled ? 0.5 : 1,
-          shadowColor: config.glow,
-          shadowOffset: { width: 0, height: 4 },
-          shadowOpacity: variant === 'ghost' ? 0 : 0.4,
-          shadowRadius: 10,
-          elevation: variant === 'ghost' ? 0 : 4,
-        },
+      disabled={inactive}
+      style={({ pressed }) => [
+        inactive && styles.inactive,
+        pressed && styles.pressed,
         style,
       ]}
     >
-      <LinearGradient
-        colors={config.bg as [string, string, ...string[]]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={[
-          styles.gradient,
-          {
-            paddingVertical: sizePadding.paddingVertical,
-            paddingHorizontal: sizePadding.paddingHorizontal,
-            borderRadius: theme.radius.pill,
-            borderColor: config.border,
-            borderWidth: variant === 'ghost' ? 0 : 1,
-          },
-        ]}
+      <GlassSurface
+        tint={variant === 'ghost' ? undefined : tint}
+        radius={radius.pill}
+        style={[styles.base, glassShadow(glow)]}
+        intensity={solidIntensity}
+        opacity={solidOpacity}
       >
         {loading ? (
-          <ActivityIndicator color={config.text} size="small" />
+          <ActivityIndicator color={labelColor} />
         ) : (
-          <View style={styles.contentRow}>
-            {icon ? <View style={styles.iconContainer}>{icon}</View> : null}
-            <Text
-              style={[
-                styles.text,
-                {
-                  color: config.text,
-                  fontSize: sizePadding.fontSize,
-                },
-                textStyle,
-              ]}
-            >
-              {title}
-            </Text>
-          </View>
+          <Text style={[styles.label, { color: labelColor }]}>{title}</Text>
         )}
-      </LinearGradient>
-    </TouchableOpacity>
+      </GlassSurface>
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  touchable: {
-    overflow: 'visible',
-  },
-  gradient: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexDirection: 'row',
-  },
-  contentRow: {
-    flexDirection: 'row',
+  base: {
+    minHeight: 54,
+    paddingHorizontal: spacing.lg,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  iconContainer: {
-    marginRight: 8,
-  },
-  text: {
-    fontWeight: '700',
-    letterSpacing: 0.3,
-  },
+  label: { fontSize: 16, fontWeight: '800', letterSpacing: 0.2 },
+  pressed: { opacity: 0.85, transform: [{ scale: 0.98 }] },
+  inactive: { opacity: 0.45 },
 });

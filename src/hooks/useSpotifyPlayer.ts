@@ -1,102 +1,49 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSpotify } from '@/context/SpotifyContext';
-import { SpotifyPlaybackState } from '@/types';
 import {
-  fetchCurrentlyPlaying,
+  getNowPlaying,
   pausePlayback,
   resumePlayback,
-  skipToNext,
-  skipToPrevious,
+  skipNext,
+  skipPrevious,
 } from '@/services/spotify';
 
-export function useSpotifyPlayer() {
-  const { isConnected, getValidAccessToken } = useSpotify();
-  const [playerState, setPlayerState] = useState<SpotifyPlaybackState>({
-    track: null,
-    isPlaying: false,
-    deviceActive: false,
-  });
-  const [isLoading, setIsLoading] = useState(false);
-  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const refreshState = useCallback(async () => {
-    if (!isConnected) return;
-    try {
+// O que está tocando agora, atualizado a cada 5 segundos enquanto há conta
+// conectada. Preferimos consultar (poll) a manter um socket: o Web API do
+// Spotify não oferece push, e 5 segundos é o suficiente para um player.
+export function useNowPlaying() {
+  const { tokens, getValidAccessToken } = useSpotify();
+  return useQuery({
+    queryKey: ['spotify', 'now-playing'],
+    queryFn: async () => {
       const token = await getValidAccessToken();
-      if (!token) return;
-      const state = await fetchCurrentlyPlaying(token);
-      setPlayerState(state);
-    } catch (e) {
-      console.warn('Erro ao atualizar tocador do Spotify:', e);
-    }
-  }, [isConnected, getValidAccessToken]);
-
-  useEffect(() => {
-    if (isConnected) {
-      refreshState();
-      pollTimerRef.current = setInterval(refreshState, 3500);
-    } else {
-      setPlayerState({ track: null, isPlaying: false, deviceActive: false });
-    }
-
-    return () => {
-      if (pollTimerRef.current) {
-        clearInterval(pollTimerRef.current);
-      }
-    };
-  }, [isConnected, refreshState]);
-
-  const togglePlay = async () => {
-    const token = await getValidAccessToken();
-    if (!token) return;
-
-    setIsLoading(true);
-    try {
-      if (playerState.isPlaying) {
-        setPlayerState((s) => ({ ...s, isPlaying: false }));
-        await pausePlayback(token);
-      } else {
-        setPlayerState((s) => ({ ...s, isPlaying: true }));
-        await resumePlayback(token);
-      }
-      setTimeout(refreshState, 500);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const next = async () => {
-    const token = await getValidAccessToken();
-    if (!token) return;
-    setIsLoading(true);
-    try {
-      await skipToNext(token);
-      setTimeout(refreshState, 600);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const previous = async () => {
-    const token = await getValidAccessToken();
-    if (!token) return;
-    setIsLoading(true);
-    try {
-      await skipToPrevious(token);
-      setTimeout(refreshState, 600);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  return {
-    track: playerState.track,
-    isPlaying: playerState.isPlaying,
-    deviceActive: playerState.deviceActive,
-    isLoading,
-    togglePlay,
-    next,
-    previous,
-    refreshState,
-  };
+      return token ? getNowPlaying(token) : null;
+    },
+    enabled: Boolean(tokens),
+    refetchInterval: tokens ? 5000 : false,
+    staleTime: 0,
+  });
 }
+
+function useControl(action: (token: string) => Promise<unknown>) {
+  const { getValidAccessToken } = useSpotify();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const token = await getValidAccessToken();
+      if (!token) throw new Error('Conecte sua conta do Spotify no Perfil.');
+      return action(token);
+    },
+    onSuccess: () => {
+      setTimeout(
+        () => queryClient.invalidateQueries({ queryKey: ['spotify', 'now-playing'] }),
+        400,
+      );
+    },
+  });
+}
+
+export const usePausePlayback = () => useControl(pausePlayback);
+export const useResumePlayback = () => useControl(resumePlayback);
+export const useSkipNext = () => useControl(skipNext);
+export const useSkipPrevious = () => useControl(skipPrevious);

@@ -1,134 +1,65 @@
-import React from 'react';
-import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useTheme } from '@/theme';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { spacing, useTheme } from '@/theme';
+import type { IconName } from '@/utils/icons';
 import { Button } from './Button';
-import { Card } from './Card';
 
-export function LoadingView({ message = 'Carregando...' }: { message?: string }) {
+export function LoadingView() {
   const { theme } = useTheme();
-
   return (
-    <View style={styles.centerContainer}>
-      <ActivityIndicator size="large" color={theme.colors.primary} />
-      <Text style={[styles.loadingText, { color: theme.colors.textSecondary }]}>
-        {message}
-      </Text>
+    <View style={styles.center}>
+      <ActivityIndicator size="large" color={theme.primary} />
     </View>
   );
 }
 
-export function ErrorState({
-  title = 'Algo deu errado',
-  message,
-  onRetry,
-}: {
-  title?: string;
-  message?: string;
-  onRetry?: () => void;
-}) {
-  const { theme } = useTheme();
+interface ErrorStateProps {
+  message: string;
+  onRetry: () => void;
+}
 
+export function ErrorState({ message, onRetry }: ErrorStateProps) {
+  const { theme } = useTheme();
   return (
-    <View style={styles.centerContainer}>
-      <Card style={styles.card}>
-        <View style={styles.iconCircle}>
-          <Ionicons name="alert-circle" size={42} color={theme.colors.danger} />
-        </View>
-        <Text style={[styles.title, { color: theme.colors.text }]}>{title}</Text>
-        {message ? (
-          <Text style={[styles.message, { color: theme.colors.textSecondary }]}>
-            {message}
-          </Text>
-        ) : null}
-        {onRetry ? (
-          <Button
-            title="Tentar novamente"
-            onPress={onRetry}
-            variant="primary"
-            style={styles.button}
-          />
-        ) : null}
-      </Card>
+    <View style={styles.center}>
+      <Ionicons name="cloud-offline" size={48} color={theme.muted} />
+      <Text style={[styles.title, { color: theme.text }]}>Algo deu errado</Text>
+      <Text style={[styles.text, { color: theme.muted }]}>{message}</Text>
+      <Button title="Tentar novamente" onPress={onRetry} style={styles.button} />
     </View>
   );
+}
+
+interface EmptyStateProps {
+  icon?: IconName;
+  title: string;
+  message: string;
 }
 
 export function EmptyState({
-  icon = 'walk-outline',
+  icon = 'file-tray-outline',
   title,
   message,
-  actionTitle,
-  onAction,
-}: {
-  icon?: keyof typeof Ionicons.glyphMap;
-  title: string;
-  message?: string;
-  actionTitle?: string;
-  onAction?: () => void;
-}) {
+}: EmptyStateProps) {
   const { theme } = useTheme();
-
   return (
-    <View style={styles.centerContainer}>
-      <Card style={styles.card}>
-        <View style={styles.iconCircle}>
-          <Ionicons name={icon} size={42} color={theme.colors.primary} />
-        </View>
-        <Text style={[styles.title, { color: theme.colors.text }]}>{title}</Text>
-        {message ? (
-          <Text style={[styles.message, { color: theme.colors.textSecondary }]}>
-            {message}
-          </Text>
-        ) : null}
-        {actionTitle && onAction ? (
-          <Button
-            title={actionTitle}
-            onPress={onAction}
-            variant="primary"
-            style={styles.button}
-          />
-        ) : null}
-      </Card>
+    <View style={styles.center}>
+      <Ionicons name={icon} size={48} color={theme.muted} />
+      <Text style={[styles.title, { color: theme.text }]}>{title}</Text>
+      <Text style={[styles.text, { color: theme.muted }]}>{message}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  centerContainer: {
+  center: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 24,
+    padding: spacing.lg,
+    gap: spacing.sm,
   },
-  card: {
-    width: '100%',
-    maxWidth: 380,
-    alignItems: 'center',
-    padding: 24,
-  },
-  iconCircle: {
-    marginBottom: 16,
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 15,
-    fontWeight: '500',
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: '700',
-    textAlign: 'center',
-    marginBottom: 8,
-  },
-  message: {
-    fontSize: 14,
-    textAlign: 'center',
-    lineHeight: 20,
-    marginBottom: 16,
-  },
-  button: {
-    marginTop: 8,
-    minWidth: 160,
-  },
+  title: { fontSize: 18, fontWeight: '700' },
+  text: { fontSize: 14, textAlign: 'center' },
+  button: { marginTop: spacing.sm, alignSelf: 'stretch' },
 });

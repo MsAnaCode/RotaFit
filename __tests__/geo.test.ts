@@ -1,184 +1,113 @@
+import type { RoutePoint } from '@/types';
 import {
-  haversineMeters,
-  isPlausibleJump,
-  routeDistanceMeters,
   averagePaceSecPerKm,
+  estimateCalories,
   formatDistance,
   formatDuration,
   formatPace,
-  estimateCalories,
+  haversineMeters,
+  isPlausibleJump,
+  routeDistanceMeters,
   simplifyRoute,
 } from '@/utils/geo';
-import { RoutePoint } from '@/types';
 
-describe('Geo Utilities', () => {
-  describe('haversineMeters', () => {
-    it('calcula a distância de ~111km para 1 grau de latitude', () => {
-      const dist = haversineMeters(0, 0, 1, 0);
-      expect(Math.round(dist / 1000)).toBe(111);
-    });
+const pt = (lat: number, lng: number, t = 0): RoutePoint => ({ lat, lng, t });
 
-    it('retorna 0 para pontos idênticos', () => {
-      const dist = haversineMeters(-15.7801, -47.9292, -15.7801, -47.9292);
-      expect(dist).toBe(0);
-    });
-
-    it('calcula distância razoável entre dois pontos em Brasília (~1km)', () => {
-      // Eixo Monumental
-      const dist = haversineMeters(-15.7983, -47.8756, -15.7975, -47.8845);
-      expect(dist).toBeGreaterThan(800);
-      expect(dist).toBeLessThan(1200);
-    });
+describe('haversineMeters', () => {
+  it('é zero para o mesmo ponto', () => {
+    expect(haversineMeters(pt(-15.79, -47.88), pt(-15.79, -47.88))).toBe(0);
   });
 
-  describe('isPlausibleJump', () => {
-    it('aceita deslocamento plausível de corrida (ex: 20m em 4s = 5m/s)', () => {
-      const p1: RoutePoint = {
-        latitude: -15.7983,
-        longitude: -47.8756,
-        timestamp: 1000,
-      };
-      // ~20 metros adiante
-      const p2: RoutePoint = {
-        latitude: -15.79848,
-        longitude: -47.8756,
-        timestamp: 5000,
-      };
-      expect(isPlausibleJump(p1, p2, 10)).toBe(true);
-    });
-
-    it('rejeita pulo impossível (teletransporte de GPS)', () => {
-      const p1: RoutePoint = {
-        latitude: -15.7983,
-        longitude: -47.8756,
-        timestamp: 1000,
-      };
-      // 1 grau adiante (~111km) em 1 segundo
-      const p2: RoutePoint = {
-        latitude: -14.7983,
-        longitude: -47.8756,
-        timestamp: 2000,
-      };
-      expect(isPlausibleJump(p1, p2, 10)).toBe(false);
-    });
-
-    it('rejeita pontos com mesmo timestamp ou delta <= 0', () => {
-      const p1: RoutePoint = {
-        latitude: -15.7983,
-        longitude: -47.8756,
-        timestamp: 5000,
-      };
-      const p2: RoutePoint = {
-        latitude: -15.7985,
-        longitude: -47.8756,
-        timestamp: 5000,
-      };
-      expect(isPlausibleJump(p1, p2)).toBe(false);
-    });
+  it('mede ~111 km para 1 grau de latitude', () => {
+    const d = haversineMeters(pt(0, 0), pt(1, 0));
+    expect(d).toBeGreaterThan(110000);
+    expect(d).toBeLessThan(112000);
   });
 
-  describe('routeDistanceMeters', () => {
-    it('retorna 0 para rotas vazias ou com apenas 1 ponto', () => {
-      expect(routeDistanceMeters([])).toBe(0);
-      expect(
-        routeDistanceMeters([{ latitude: -15.79, longitude: -47.88, timestamp: 1000 }]),
-      ).toBe(0);
-    });
+  it('bate com uma distância conhecida (Esplanada dos Ministérios, ~1 km)', () => {
+    const d = haversineMeters(pt(-15.7997, -47.8645), pt(-15.7969, -47.8756));
+    expect(d).toBeGreaterThan(1100);
+    expect(d).toBeLessThan(1300);
+  });
+});
 
-    it('soma os segmentos plausíveis', () => {
-      const points: RoutePoint[] = [
-        { latitude: 0, longitude: 0, timestamp: 0 },
-        { latitude: 0.001, longitude: 0, timestamp: 20000 }, // ~111m em 20s = 5.5 m/s
-        { latitude: 0.002, longitude: 0, timestamp: 40000 }, // ~111m
-      ];
-      const dist = routeDistanceMeters(points);
-      expect(dist).toBeGreaterThan(200);
-      expect(dist).toBeLessThan(250);
-    });
+describe('isPlausibleJump e routeDistanceMeters', () => {
+  it('aceita um deslocamento normal de corrida', () => {
+    expect(isPlausibleJump(pt(0, 0, 0), pt(0, 0.0001, 2000))).toBe(true);
   });
 
-  describe('averagePaceSecPerKm', () => {
-    it('retorna 300 s/km (5:00 min/km) para 1km em 5 minutos (300s)', () => {
-      expect(averagePaceSecPerKm(300, 1000)).toBe(300);
-    });
-
-    it('retorna 0 quando distância é zero', () => {
-      expect(averagePaceSecPerKm(300, 0)).toBe(0);
-    });
-
-    it('retorna 0 quando tempo é zero', () => {
-      expect(averagePaceSecPerKm(0, 1000)).toBe(0);
-    });
+  it('rejeita um salto de GPS (muito longe, muito rápido)', () => {
+    expect(isPlausibleJump(pt(0, 0, 0), pt(0, 0.01, 1000))).toBe(false);
   });
 
-  describe('formatDistance', () => {
-    it('formata metros abaixo de 1000m', () => {
-      expect(formatDistance(450)).toBe('450 m');
-      expect(formatDistance(0)).toBe('0 m');
-    });
-
-    it('formata quilômetros a partir de 1000m', () => {
-      expect(formatDistance(1000)).toBe('1.00 km');
-      expect(formatDistance(5230)).toBe('5.23 km');
-    });
+  it('soma a rota descartando só os pares implausíveis', () => {
+    // 0->1 e 2->3: deslocamento normal. 1->2: salto de GPS (descartado).
+    const p0 = pt(0, 0, 0);
+    const p1 = pt(0, 0.0001, 2000);
+    const p2 = pt(0, 0.01, 3000); // salto implausível a partir de p1
+    const p3 = pt(0, 0.0101, 5000); // deslocamento normal a partir de p2
+    expect(isPlausibleJump(p1, p2)).toBe(false);
+    expect(isPlausibleJump(p2, p3)).toBe(true);
+    const total = routeDistanceMeters([p0, p1, p2, p3]);
+    const expected = haversineMeters(p0, p1) + haversineMeters(p2, p3);
+    expect(total).toBeCloseTo(expected, 6);
   });
 
-  describe('formatDuration', () => {
-    it('formata segundos para mm:ss', () => {
-      expect(formatDuration(0)).toBe('00:00');
-      expect(formatDuration(65)).toBe('01:05');
-      expect(formatDuration(599)).toBe('09:59');
-    });
+  it('rota com um ponto só tem distância zero', () => {
+    expect(routeDistanceMeters([pt(0, 0)])).toBe(0);
+  });
+});
 
-    it('formata segundos para h:mm:ss acima de 1 hora', () => {
-      expect(formatDuration(3600)).toBe('1:00:00');
-      expect(formatDuration(3665)).toBe('1:01:05');
-    });
+describe('averagePaceSecPerKm', () => {
+  it('calcula o ritmo médio', () => {
+    expect(averagePaceSecPerKm(1000, 300)).toBe(300);
+    expect(averagePaceSecPerKm(5000, 1500)).toBe(300);
   });
 
-  describe('formatPace', () => {
-    it('formata ritmo corretamente', () => {
-      expect(formatPace(300)).toBe(`05'00" /km`);
-      expect(formatPace(325)).toBe(`05'25" /km`);
-    });
+  it('é null sem distância percorrida', () => {
+    expect(averagePaceSecPerKm(0, 300)).toBeNull();
+  });
+});
 
-    it('retorna traços para valores inválidos ou zero', () => {
-      expect(formatPace(0)).toBe(`--'--" /km`);
-      expect(formatPace(-1)).toBe(`--'--" /km`);
-    });
+describe('formatação', () => {
+  it('formatDistance usa metros abaixo de 1 km e km com vírgula acima', () => {
+    expect(formatDistance(850)).toBe('850 m');
+    expect(formatDistance(1500)).toBe('1,50 km');
+    expect(formatDistance(10000)).toBe('10,00 km');
   });
 
-  describe('estimateCalories', () => {
-    it('calcula calorias baseado no peso e distância', () => {
-      // 5km * 70kg * 1.036 = ~362.6 kcal
-      const cal = estimateCalories(5000, 1800, 70);
-      expect(cal).toBe(363);
-    });
-
-    it('retorna 0 para distância zero', () => {
-      expect(estimateCalories(0, 300, 70)).toBe(0);
-    });
+  it('formatDuration usa mm:ss e hh:mm:ss', () => {
+    expect(formatDuration(90)).toBe('01:30');
+    expect(formatDuration(3725)).toBe('01:02:05');
   });
 
-  describe('simplifyRoute', () => {
-    it('mantém rotas pequenas inalteradas', () => {
-      const pts: RoutePoint[] = [
-        { latitude: 0, longitude: 0, timestamp: 0 },
-        { latitude: 1, longitude: 1, timestamp: 1 },
-      ];
-      expect(simplifyRoute(pts)).toEqual(pts);
-    });
+  it('formatPace usa o formato minuto-segundo por km', () => {
+    expect(formatPace(330)).toBe(`5'30"/km`);
+    expect(formatPace(305)).toBe(`5'05"/km`);
+    expect(formatPace(null)).toBe('—');
+  });
+});
 
-    it('simplifica pontos colineares intermediários', () => {
-      const pts: RoutePoint[] = [
-        { latitude: 0, longitude: 0, timestamp: 0 },
-        { latitude: 0.5, longitude: 0.5, timestamp: 10 },
-        { latitude: 1, longitude: 1, timestamp: 20 },
-      ];
-      const simplified = simplifyRoute(pts, 10);
-      expect(simplified.length).toBe(2);
-      expect(simplified[0]).toBe(pts[0]);
-      expect(simplified[1]).toBe(pts[2]);
-    });
+describe('estimateCalories', () => {
+  it('cresce com a duração e é zero sem tempo', () => {
+    expect(estimateCalories(5000, 0)).toBe(0);
+    expect(estimateCalories(5000, 1800, 70)).toBeGreaterThan(0);
+    expect(estimateCalories(5000, 3600, 70)).toBeGreaterThan(
+      estimateCalories(5000, 1800, 70),
+    );
+  });
+});
+
+describe('simplifyRoute', () => {
+  it('mantém a rota se já está dentro do limite', () => {
+    const route = [pt(0, 0), pt(0, 1)];
+    expect(simplifyRoute(route, 200)).toEqual(route);
+  });
+
+  it('reduz o número de pontos preservando o último', () => {
+    const route = Array.from({ length: 1000 }, (_, i) => pt(0, i));
+    const simplified = simplifyRoute(route, 100);
+    expect(simplified.length).toBeLessThanOrEqual(101);
+    expect(simplified[simplified.length - 1]).toEqual(route[999]);
   });
 });

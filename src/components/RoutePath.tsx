@@ -1,184 +1,157 @@
-import React from 'react';
-import { View, StyleSheet, Text } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import { StyleSheet, Text, View } from 'react-native';
 import Svg, {
-  Path,
   Circle,
   Defs,
   LinearGradient as SvgGradient,
+  Path,
   Stop,
-  G,
 } from 'react-native-svg';
-import { RoutePoint } from '@/types';
-import { useTheme } from '@/theme';
-import { simplifyRoute } from '@/utils/geo';
+import { GlassSurface } from '@/components/glass/GlassSurface';
+import { radius, spacing, useTheme } from '@/theme';
+import type { RoutePoint } from '@/types';
 
 interface RoutePathProps {
-  points: RoutePoint[];
-  width?: number;
+  route: RoutePoint[];
   height?: number;
-  strokeWidth?: number;
-  showPins?: boolean;
+  live?: boolean; // true na corrida ativa: mostra um marcador pulsante no fim
 }
 
-export function RoutePath({
-  points,
-  width = 300,
-  height = 200,
-  strokeWidth = 4,
-  showPins = true,
-}: RoutePathProps) {
-  const { theme } = useTheme();
+// Suaviza a linha ligando os pontos com curvas (Catmull-Rom → Bézier), em vez
+// de segmentos retos: o traçado fica com a leveza de um mapa de verdade.
+function smoothPath(points: { x: number; y: number }[]): string {
+  if (points.length < 2) return '';
+  let d = `M ${points[0].x} ${points[0].y}`;
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[i - 1] ?? points[i];
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    const p3 = points[i + 2] ?? p2;
+    const c1x = p1.x + (p2.x - p0.x) / 6;
+    const c1y = p1.y + (p2.y - p0.y) / 6;
+    const c2x = p2.x - (p3.x - p1.x) / 6;
+    const c2y = p2.y - (p3.y - p1.y) / 6;
+    d += ` C ${c1x} ${c1y}, ${c2x} ${c2y}, ${p2.x} ${p2.y}`;
+  }
+  return d;
+}
 
-  if (!points || points.length < 2) {
+// Traçado da corrida desenhado à mão (sem mapa nem chave de API — sem custo,
+// sem cadastro de cartão, e sempre disponível offline). Cabe dentro de um
+// cartão de vidro com um leve grid de fundo, para lembrar um mapa sem ser um.
+export function RoutePath({ route, height = 240, live = false }: RoutePathProps) {
+  const { theme } = useTheme();
+  const W = 340;
+  const H = height;
+
+  if (route.length < 2) {
     return (
-      <View
-        style={[
-          styles.emptyContainer,
-          {
-            width,
-            height,
-            backgroundColor: theme.colors.mapBg,
-            borderColor: theme.colors.cardBorder,
-          },
-        ]}
-      >
-        <Text style={[styles.emptyText, { color: theme.colors.textMuted }]}>
-          Aguardando traçado da rota...
-        </Text>
-      </View>
+      <GlassSurface radius={radius.lg} style={[styles.wrap, { height }]} intensity={20}>
+        <View style={styles.emptyState}>
+          <Ionicons name="location-outline" size={28} color={theme.muted} />
+          <Text style={[styles.emptyText, { color: theme.muted }]}>
+            {live ? 'Localizando... ande um pouco para ver a rota' : 'Sem pontos de rota'}
+          </Text>
+        </View>
+      </GlassSurface>
     );
   }
 
-  // Otimiza traçado caso tenha muitos pontos
-  const smoothedPoints = points.length > 60 ? simplifyRoute(points, 2) : points;
+  const lats = route.map((p) => p.lat);
+  const lngs = route.map((p) => p.lng);
+  const minLat = Math.min(...lats);
+  const maxLat = Math.max(...lats);
+  const minLng = Math.min(...lngs);
+  const maxLng = Math.max(...lngs);
+  const pad = 32;
+  const spanLat = maxLat - minLat || 0.0003;
+  const spanLng = maxLng - minLng || 0.0003;
+  const scale = Math.min((W - pad * 2) / spanLng, (H - pad * 2) / spanLat);
+  const offX = (W - spanLng * scale) / 2;
+  const offY = (H - spanLat * scale) / 2;
 
-  // Encontra limites geográficos (bounding box)
-  let minLat = Infinity;
-  let maxLat = -Infinity;
-  let minLng = Infinity;
-  let maxLng = -Infinity;
-
-  smoothedPoints.forEach((p) => {
-    if (p.latitude < minLat) minLat = p.latitude;
-    if (p.latitude > maxLat) maxLat = p.latitude;
-    if (p.longitude < minLng) minLng = p.longitude;
-    if (p.longitude > maxLng) maxLng = p.longitude;
+  const toXY = (p: RoutePoint) => ({
+    x: offX + (p.lng - minLng) * scale,
+    y: H - offY - (p.lat - minLat) * scale, // inverte y: latitude cresce para cima
   });
+  const points = route.map(toXY);
+  const d = smoothPath(points);
+  const start = points[0];
+  const end = points[points.length - 1];
 
-  const latSpan = Math.max(maxLat - minLat, 0.0001);
-  const lngSpan = Math.max(maxLng - minLng, 0.0001);
-
-  const padding = 24;
-  const usableWidth = width - padding * 2;
-  const usableHeight = height - padding * 2;
-
-  // Função de projeção geo -> SVG
-  const project = (pt: RoutePoint) => {
-    const x = padding + ((pt.longitude - minLng) / lngSpan) * usableWidth;
-    // Inverte Y porque latitudes maiores ficam mais acima no hemisfério norte / tela
-    const y = height - padding - ((pt.latitude - minLat) / latSpan) * usableHeight;
-    return { x, y };
-  };
-
-  const svgPoints = smoothedPoints.map(project);
-
-  // Constrói d do SVG Path com suavização Catmull-Rom para Bézier
-  let d = `M ${svgPoints[0].x.toFixed(1)} ${svgPoints[0].y.toFixed(1)}`;
-  for (let i = 1; i < svgPoints.length; i++) {
-    const curr = svgPoints[i];
-    d += ` L ${curr.x.toFixed(1)} ${curr.y.toFixed(1)}`;
+  // Pontinhos de fundo, como um grid de mapa estilizado — puramente decorativo.
+  const dots = [];
+  for (let x = pad; x < W - pad + 1; x += 28) {
+    for (let y = pad; y < H - pad + 1; y += 28) dots.push({ x, y });
   }
 
-  const startPt = svgPoints[0];
-  const endPt = svgPoints[svgPoints.length - 1];
-
   return (
-    <View
-      style={[
-        styles.container,
-        {
-          width,
-          height,
-          backgroundColor: theme.colors.mapBg,
-          borderColor: theme.colors.cardBorder,
-        },
-      ]}
-    >
-      <Svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
+    <GlassSurface radius={radius.lg} style={[styles.wrap, { height }]} intensity={20}>
+      <Svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`}>
         <Defs>
-          <SvgGradient id="routeGradient" x1="0" y1="0" x2="1" y2="1">
-            <Stop offset="0%" stopColor="#10B981" stopOpacity="0.9" />
-            <Stop offset="50%" stopColor={theme.colors.accent} stopOpacity="1" />
-            <Stop offset="100%" stopColor={theme.colors.primary} stopOpacity="1" />
+          <SvgGradient id="trail" x1="0" y1="0" x2="1" y2="1">
+            <Stop offset="0" stopColor={theme.success} stopOpacity={1} />
+            <Stop offset="1" stopColor={theme.primary} stopOpacity={1} />
           </SvgGradient>
         </Defs>
-
-        {/* Glow / contorno traseiro */}
+        {dots.map((p, i) => (
+          <Circle key={i} cx={p.x} cy={p.y} r={1.1} fill={theme.muted} opacity={0.18} />
+        ))}
         <Path
           d={d}
           fill="none"
-          stroke={theme.colors.primaryGlow}
-          strokeWidth={strokeWidth + 6}
+          stroke="url(#trail)"
+          strokeWidth={5}
           strokeLinecap="round"
           strokeLinejoin="round"
         />
-
-        {/* Linha principal com gradiente */}
-        <Path
-          d={d}
-          fill="none"
-          stroke="url(#routeGradient)"
-          strokeWidth={strokeWidth}
-          strokeLinecap="round"
-          strokeLinejoin="round"
+        <Circle
+          cx={start.x}
+          cy={start.y}
+          r={7}
+          fill={theme.success}
+          stroke={theme.surface}
+          strokeWidth={2}
         />
-
-        {showPins ? (
-          <G>
-            {/* Ponto de partida (Verde) */}
+        {live ? (
+          <>
+            <Circle cx={end.x} cy={end.y} r={11} fill={theme.primary} opacity={0.25} />
             <Circle
-              cx={startPt.x}
-              cy={startPt.y}
-              r={7}
-              fill="#10B981"
-              stroke="#FFFFFF"
-              strokeWidth={2}
-            />
-
-            {/* Ponto de chegada / atual (Pulsante / Primário) */}
-            <Circle cx={endPt.x} cy={endPt.y} r={9} fill={theme.colors.primaryGlow} />
-            <Circle
-              cx={endPt.x}
-              cy={endPt.y}
+              cx={end.x}
+              cy={end.y}
               r={6}
-              fill={theme.colors.primary}
-              stroke="#FFFFFF"
+              fill={theme.primary}
+              stroke={theme.surface}
               strokeWidth={2}
             />
-          </G>
-        ) : null}
+          </>
+        ) : (
+          <Circle
+            cx={end.x}
+            cy={end.y}
+            r={7}
+            fill={theme.danger}
+            stroke={theme.surface}
+            strokeWidth={2}
+          />
+        )}
       </Svg>
-    </View>
+      <LinearGradient
+        colors={[
+          'transparent',
+          theme.mode === 'dark' ? 'rgba(0,0,0,0.35)' : 'rgba(0,0,0,0.06)',
+        ]}
+        style={styles.floorShadow}
+        pointerEvents="none"
+      />
+    </GlassSurface>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    borderRadius: 16,
-    overflow: 'hidden',
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  emptyContainer: {
-    borderRadius: 16,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 16,
-  },
-  emptyText: {
-    fontSize: 13,
-    fontWeight: '500',
-  },
+  wrap: { overflow: 'hidden', justifyContent: 'center' },
+  emptyState: { alignItems: 'center', gap: spacing.xs, padding: spacing.lg },
+  emptyText: { fontSize: 13, textAlign: 'center' },
+  floorShadow: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 40 },
 });

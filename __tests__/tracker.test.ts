@@ -1,112 +1,139 @@
-import {
-  trackerReducer,
-  initialTrackerState,
-  elapsedSeconds,
-  TrackerState,
-} from '@/utils/tracker';
-import { RoutePoint } from '@/types';
+import { elapsedSeconds, initialTrackerState, trackerReducer } from '@/utils/tracker';
+import type { TrackerState } from '@/utils/tracker';
 
-describe('Tracker State Machine', () => {
-  it('inicia no estado idle', () => {
-    expect(initialTrackerState.status).toBe('idle');
-    expect(initialTrackerState.points).toHaveLength(0);
-    expect(initialTrackerState.distanceMeters).toBe(0);
+const reduce = (
+  state: TrackerState,
+  ...actions: Parameters<typeof trackerReducer>[1][]
+) => actions.reduce(trackerReducer, state);
+
+describe('trackerReducer', () => {
+  it('START zera o estado e marca o início', () => {
+    const state = trackerReducer(initialTrackerState, { type: 'START', now: 1000 });
+    expect(state).toMatchObject({
+      status: 'active',
+      startedAt: 1000,
+      route: [],
+      distanceMeters: 0,
+    });
   });
 
-  it('transiciona para running ao receber START', () => {
-    const t0 = 1000;
-    const state = trackerReducer(initialTrackerState, {
-      type: 'START',
-      timestamp: t0,
+  it('ADD_POINT é ignorado fora do status "active"', () => {
+    const added = trackerReducer(initialTrackerState, {
+      type: 'ADD_POINT',
+      now: 1000,
+      lat: 0,
+      lng: 0,
     });
-    expect(state.status).toBe('running');
-    expect(state.startedAt).toBe(t0);
+    expect(added).toBe(initialTrackerState);
   });
 
-  it('ignora START se já estiver rodando', () => {
-    const s1 = trackerReducer(initialTrackerState, {
-      type: 'START',
-      timestamp: 1000,
-    });
-    const s2 = trackerReducer(s1, { type: 'START', timestamp: 2000 });
-    expect(s2.startedAt).toBe(1000);
-  });
-
-  it('acumula pontos e calcula distância ao receber ADD_POINT', () => {
-    let state = trackerReducer(initialTrackerState, {
-      type: 'START',
-      timestamp: 1000,
-    });
-    const p1: RoutePoint = { latitude: 0, longitude: 0, timestamp: 1000 };
-    const p2: RoutePoint = { latitude: 0.001, longitude: 0, timestamp: 20000 };
-
-    state = trackerReducer(state, { type: 'ADD_POINT', point: p1 });
-    expect(state.points).toHaveLength(1);
-    expect(state.distanceMeters).toBe(0);
-
-    state = trackerReducer(state, { type: 'ADD_POINT', point: p2 });
-    expect(state.points).toHaveLength(2);
-    expect(state.distanceMeters).toBeGreaterThan(100);
-  });
-
-  it('ignora pontos que configuram saltos de GPS absurdos', () => {
-    let state = trackerReducer(initialTrackerState, {
-      type: 'START',
-      timestamp: 1000,
-    });
-    const p1: RoutePoint = { latitude: 0, longitude: 0, timestamp: 1000 };
-    const teleport: RoutePoint = { latitude: 10, longitude: 10, timestamp: 2000 };
-
-    state = trackerReducer(state, { type: 'ADD_POINT', point: p1 });
-    state = trackerReducer(state, { type: 'ADD_POINT', point: teleport });
-
-    expect(state.points).toHaveLength(1);
+  it('primeiro ponto sempre entra, sem somar distância', () => {
+    const state = reduce(
+      initialTrackerState,
+      { type: 'START', now: 0 },
+      { type: 'ADD_POINT', now: 500, lat: -15.79, lng: -47.88 },
+    );
+    expect(state.route).toHaveLength(1);
+    expect(state.route[0]).toEqual({ lat: -15.79, lng: -47.88, t: 500 });
     expect(state.distanceMeters).toBe(0);
   });
 
-  it('pausa e retoma contabilizando o tempo pausado', () => {
-    const tStart = 1000;
-    let state = trackerReducer(initialTrackerState, {
-      type: 'START',
-      timestamp: tStart,
-    });
-
-    // Pausa aos 10 segundos
-    state = trackerReducer(state, { type: 'PAUSE', timestamp: 11000 });
-    expect(state.status).toBe('paused');
-    expect(state.pausedAt).toBe(11000);
-
-    // Retoma 5 segundos depois
-    state = trackerReducer(state, { type: 'RESUME', timestamp: 16000 });
-    expect(state.status).toBe('running');
-    expect(state.pausedAt).toBeNull();
-    expect(state.totalPausedMs).toBe(5000);
-
-    // Tempo corrido total aos 20s (20s corridos - 5s pausa = 15s líquidos)
-    const elapsed = elapsedSeconds(state, 21000);
-    expect(elapsed).toBe(15);
+  it('acumula distância entre pontos plausíveis', () => {
+    const state = reduce(
+      initialTrackerState,
+      { type: 'START', now: 0 },
+      { type: 'ADD_POINT', now: 0, lat: 0, lng: 0 },
+      { type: 'ADD_POINT', now: 2000, lat: 0, lng: 0.0001 },
+    );
+    expect(state.distanceMeters).toBeGreaterThan(0);
+    expect(state.route).toHaveLength(2);
   });
 
-  it('finaliza a corrida e congela o tempo', () => {
-    let state = trackerReducer(initialTrackerState, {
-      type: 'START',
-      timestamp: 0,
-    });
-    state = trackerReducer(state, { type: 'FINISH', timestamp: 60000 });
+  it('descarta um salto de GPS implausível', () => {
+    const state = reduce(
+      initialTrackerState,
+      { type: 'START', now: 0 },
+      { type: 'ADD_POINT', now: 0, lat: 0, lng: 0 },
+      { type: 'ADD_POINT', now: 1000, lat: 0, lng: 0.01 }, // ~1,1 km em 1 s: impossível
+    );
+    expect(state.route).toHaveLength(1);
+    expect(state.distanceMeters).toBe(0);
+  });
 
+  it('PAUSE e RESUME alternam o status e contam o tempo parado', () => {
+    const paused = reduce(
+      initialTrackerState,
+      { type: 'START', now: 0 },
+      { type: 'PAUSE', now: 5000 },
+    );
+    expect(paused.status).toBe('paused');
+    const resumed = trackerReducer(paused, { type: 'RESUME', now: 8000 });
+    expect(resumed.status).toBe('active');
+    expect(resumed.pausedMs).toBe(3000);
+  });
+
+  it('ADD_POINT não é registrado durante a pausa', () => {
+    const state = reduce(
+      initialTrackerState,
+      { type: 'START', now: 0 },
+      { type: 'PAUSE', now: 1000 },
+      { type: 'ADD_POINT', now: 2000, lat: 1, lng: 1 },
+    );
+    expect(state.route).toHaveLength(0);
+  });
+
+  it('FINISH a partir de pausado soma a última pausa também', () => {
+    const state = reduce(
+      initialTrackerState,
+      { type: 'START', now: 0 },
+      { type: 'PAUSE', now: 1000 },
+      { type: 'FINISH', now: 4000 },
+    );
     expect(state.status).toBe('finished');
-    expect(state.endedAt).toBe(60000);
-
-    // Mesmo com timestamp posterior, o tempo decorrido deve permanecer 60 segundos
-    expect(elapsedSeconds(state, 120000)).toBe(60);
+    expect(state.pausedMs).toBe(3000);
+    expect(state.finishedAt).toBe(4000);
   });
 
-  it('reseta para o estado inicial', () => {
-    let state = trackerReducer(initialTrackerState, {
-      type: 'START',
-      timestamp: 0,
-    });
-    state = trackerReducer(state, { type: 'RESET' });
+  it('RESET volta ao estado inicial', () => {
+    const state = reduce(
+      initialTrackerState,
+      { type: 'START', now: 0 },
+      { type: 'RESET' },
+    );
     expect(state).toEqual(initialTrackerState);
+  });
+});
+
+describe('elapsedSeconds', () => {
+  it('é zero antes de começar', () => {
+    expect(elapsedSeconds(initialTrackerState, 5000)).toBe(0);
+  });
+
+  it('conta o tempo corrido, sem as pausas', () => {
+    const state = reduce(
+      initialTrackerState,
+      { type: 'START', now: 0 },
+      { type: 'PAUSE', now: 10_000 },
+      { type: 'RESUME', now: 15_000 },
+    );
+    expect(elapsedSeconds(state, 20_000)).toBe(15); // 20s totais - 5s de pausa
+  });
+
+  it('durante uma pausa em andamento, não conta o tempo pausado até agora', () => {
+    const state = reduce(
+      initialTrackerState,
+      { type: 'START', now: 0 },
+      { type: 'PAUSE', now: 10_000 },
+    );
+    expect(elapsedSeconds(state, 12_000)).toBe(10); // parado desde os 10s: não avança mais
+  });
+
+  it('depois de FINISH, o tempo não avança mais mesmo se "now" passar', () => {
+    const state = reduce(
+      initialTrackerState,
+      { type: 'START', now: 0 },
+      { type: 'FINISH', now: 30_000 },
+    );
+    expect(elapsedSeconds(state, 999_999)).toBe(30);
   });
 });

@@ -1,146 +1,145 @@
-import React, { createContext, useContext, useEffect, useState, useMemo } from 'react';
 import * as AuthSession from 'expo-auth-session';
-import { SpotifyTokens } from '@/types';
 import {
-  SPOTIFY_CLIENT_ID,
-  SPOTIFY_SCOPES,
-  spotifyDiscovery,
-  getSpotifyRedirectUri,
-  exchangeSpotifyCode,
-  refreshSpotifyToken,
-} from '@/lib/spotify';
-import { saveSecureItem, getSecureItem, deleteSecureItem } from '@/lib/secureStore';
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import type { ReactNode } from 'react';
+import { deleteSecureItem, getSecureItem, setSecureItem } from '@/lib/secureStore';
+import { SPOTIFY_SCOPES, spotifyClientId, spotifyDiscovery } from '@/lib/spotify';
+import type { SpotifyTokens } from '@/types';
+
+const STORE_KEY = 'rotafit.spotify.tokens';
 
 interface SpotifyContextValue {
   tokens: SpotifyTokens | null;
-  isConnected: boolean;
-  isLoading: boolean;
-  connectSpotify: () => Promise<void>;
-  disconnectSpotify: () => Promise<void>;
+  connecting: boolean;
+  connect: () => void;
+  disconnect: () => Promise<void>;
   getValidAccessToken: () => Promise<string | null>;
-  isDemoConnected: boolean;
 }
-
-const SPOTIFY_TOKENS_STORAGE_KEY = 'rotafit.spotify_tokens';
-const SPOTIFY_DEMO_KEY = 'rotafit.spotify_demo_connected';
 
 const SpotifyContext = createContext<SpotifyContextValue | undefined>(undefined);
 
-export function SpotifyProvider({ children }: { children: React.ReactNode }) {
+const redirectUri = AuthSession.makeRedirectUri({
+  scheme: 'rotafit',
+  path: 'spotify-auth',
+});
+
+async function saveTokens(tokens: SpotifyTokens) {
+  await setSecureItem(STORE_KEY, JSON.stringify(tokens));
+}
+
+async function loadTokens(): Promise<SpotifyTokens | null> {
+  const raw = await getSecureItem(STORE_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as SpotifyTokens;
+  } catch {
+    return null;
+  }
+}
+
+// Login e controle de sessão do Spotify. Usa PKCE (sem client secret) e guarda
+// os tokens no SecureStore do aparelho — são credenciais de terceiro, mais
+// sensíveis que uma preferência qualquer, por isso não vão no AsyncStorage.
+export function SpotifyProvider({ children }: { children: ReactNode }) {
   const [tokens, setTokens] = useState<SpotifyTokens | null>(null);
-  const [isDemoConnected, setIsDemoConnected] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
+  const [connecting, setConnecting] = useState(false);
+  const refreshing = useRef<Promise<string | null> | null>(null);
+
+  const [request, response, promptAsync] = AuthSession.useAuthRequest(
+    { clientId: spotifyClientId, scopes: SPOTIFY_SCOPES, redirectUri, usePKCE: true },
+    spotifyDiscovery,
+  );
 
   useEffect(() => {
-    (async () => {
-      try {
-        const demo = await getSecureItem(SPOTIFY_DEMO_KEY);
-        if (demo === 'true') {
-          setIsDemoConnected(true);
-        }
-
-        const raw = await getSecureItem(SPOTIFY_TOKENS_STORAGE_KEY);
-        if (raw) {
-          const parsed: SpotifyTokens = JSON.parse(raw);
-          setTokens(parsed);
-        }
-      } catch (err) {
-        console.warn('Erro ao restaurar tokens do Spotify:', err);
-      } finally {
-        setIsLoading(false);
-      }
-    })();
+    loadTokens().then(setTokens);
   }, []);
 
-  const saveTokens = async (newTokens: SpotifyTokens) => {
-    setTokens(newTokens);
-    await saveSecureItem(SPOTIFY_TOKENS_STORAGE_KEY, JSON.stringify(newTokens));
-  };
-
-  const getValidAccessToken = async (): Promise<string | null> => {
-    if (isDemoConnected) {
-      return 'demo-spotify-access-token';
-    }
-
-    if (!tokens) return null;
-
-    // Se o token ainda é válido por mais de 60 segundos
-    if (Date.now() < tokens.expiresAt - 60000) {
-      return tokens.accessToken;
-    }
-
-    try {
-      const refreshed = await refreshSpotifyToken(tokens.refreshToken);
-      await saveTokens(refreshed);
-      return refreshed.accessToken;
-    } catch {
-      await disconnectSpotify();
-      return null;
-    }
-  };
-
-  const connectSpotify = async () => {
-    if (!SPOTIFY_CLIENT_ID) {
-      // Modo demonstração quando nenhuma Client ID foi configurada no .env
-      setIsDemoConnected(true);
-      await saveSecureItem(SPOTIFY_DEMO_KEY, 'true');
+  useEffect(() => {
+    if (response?.type !== 'success' || !request?.codeVerifier) {
+      if (response?.type === 'error' || response?.type === 'cancel') setConnecting(false);
       return;
     }
-
-    const redirectUri = getSpotifyRedirectUri();
-    const request = new AuthSession.AuthRequest({
-      clientId: SPOTIFY_CLIENT_ID,
-      scopes: SPOTIFY_SCOPES,
-      redirectUri,
-      usePKCE: true,
-      responseType: AuthSession.ResponseType.Code,
-    });
-
-    const result = await request.promptAsync(spotifyDiscovery);
-
-    if (result.type === 'success' && result.params.code) {
-      if (!request.codeVerifier) {
-        throw new Error('PKCE Code Verifier não encontrado');
-      }
-
-      const receivedTokens = await exchangeSpotifyCode(
-        result.params.code,
-        request.codeVerifier,
+    setConnecting(true);
+    AuthSession.exchangeCodeAsync(
+      {
+        clientId: spotifyClientId,
+        code: response.params.code,
         redirectUri,
-      );
-      await saveTokens(receivedTokens);
-      setIsDemoConnected(false);
-      await deleteSecureItem(SPOTIFY_DEMO_KEY);
-    }
-  };
+        extraParams: { code_verifier: request.codeVerifier },
+      },
+      spotifyDiscovery,
+    )
+      .then(async (result) => {
+        const next: SpotifyTokens = {
+          accessToken: result.accessToken,
+          refreshToken: result.refreshToken ?? '',
+          expiresAt: Date.now() + (result.expiresIn ?? 3600) * 1000,
+        };
+        await saveTokens(next);
+        setTokens(next);
+      })
+      .finally(() => setConnecting(false));
+  }, [response, request]);
 
-  const disconnectSpotify = async () => {
+  const connect = useCallback(() => {
+    setConnecting(true);
+    promptAsync().catch(() => setConnecting(false));
+  }, [promptAsync]);
+
+  const disconnect = useCallback(async () => {
+    await deleteSecureItem(STORE_KEY);
     setTokens(null);
-    setIsDemoConnected(false);
-    await deleteSecureItem(SPOTIFY_TOKENS_STORAGE_KEY);
-    await deleteSecureItem(SPOTIFY_DEMO_KEY);
-  };
+  }, []);
+
+  // Renova o token de acesso quando falta menos de um minuto para expirar, e
+  // devolve um token pronto para uso (ou null, se não há conta conectada).
+  const getValidAccessToken = useCallback(async (): Promise<string | null> => {
+    if (!tokens) return null;
+    if (tokens.expiresAt - Date.now() > 60_000) return tokens.accessToken;
+    if (!refreshing.current) {
+      refreshing.current = AuthSession.refreshAsync(
+        { clientId: spotifyClientId, refreshToken: tokens.refreshToken },
+        spotifyDiscovery,
+      )
+        .then(async (result) => {
+          const next: SpotifyTokens = {
+            accessToken: result.accessToken,
+            refreshToken: result.refreshToken ?? tokens.refreshToken,
+            expiresAt: Date.now() + (result.expiresIn ?? 3600) * 1000,
+          };
+          await saveTokens(next);
+          setTokens(next);
+          return next.accessToken;
+        })
+        .catch(async () => {
+          // Refresh token revogado ou expirado: peça para conectar de novo.
+          await disconnect();
+          return null;
+        })
+        .finally(() => {
+          refreshing.current = null;
+        });
+    }
+    return refreshing.current;
+  }, [tokens, disconnect]);
 
   const value = useMemo(
-    () => ({
-      tokens,
-      isConnected: Boolean(tokens || isDemoConnected),
-      isLoading,
-      connectSpotify,
-      disconnectSpotify,
-      getValidAccessToken,
-      isDemoConnected,
-    }),
-    [tokens, isDemoConnected, isLoading],
+    () => ({ tokens, connecting, connect, disconnect, getValidAccessToken }),
+    [tokens, connecting, connect, disconnect, getValidAccessToken],
   );
 
   return <SpotifyContext.Provider value={value}>{children}</SpotifyContext.Provider>;
 }
 
 export function useSpotify(): SpotifyContextValue {
-  const ctx = useContext(SpotifyContext);
-  if (!ctx) {
-    throw new Error('useSpotify must be used within a SpotifyProvider');
-  }
-  return ctx;
+  const context = useContext(SpotifyContext);
+  if (!context) throw new Error('useSpotify deve ser usado dentro de <SpotifyProvider>');
+  return context;
 }

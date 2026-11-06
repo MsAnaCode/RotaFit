@@ -1,110 +1,86 @@
-import { RoutePoint, RunStatus } from '@/types';
-import { haversineMeters, isPlausibleJump } from './geo';
+import { haversineMeters, isPlausibleJump } from '@/utils/geo';
+import type { RoutePoint } from '@/types';
+
+export type TrackerStatus = 'idle' | 'active' | 'paused' | 'finished';
 
 export interface TrackerState {
-  status: RunStatus;
-  points: RoutePoint[];
+  status: TrackerStatus;
+  startedAt: number | null; // epoch ms
+  finishedAt: number | null;
+  route: RoutePoint[];
   distanceMeters: number;
-  startedAt: number | null;
-  pausedAt: number | null;
-  totalPausedMs: number;
-  endedAt: number | null;
+  pausedMs: number;
+  pauseStartedAt: number | null;
 }
-
-export type TrackerAction =
-  | { type: 'START'; timestamp?: number }
-  | { type: 'ADD_POINT'; point: RoutePoint }
-  | { type: 'PAUSE'; timestamp?: number }
-  | { type: 'RESUME'; timestamp?: number }
-  | { type: 'FINISH'; timestamp?: number }
-  | { type: 'RESET' };
 
 export const initialTrackerState: TrackerState = {
   status: 'idle',
-  points: [],
-  distanceMeters: 0,
   startedAt: null,
-  pausedAt: null,
-  totalPausedMs: 0,
-  endedAt: null,
+  finishedAt: null,
+  route: [],
+  distanceMeters: 0,
+  pausedMs: 0,
+  pauseStartedAt: null,
 };
 
+export type TrackerAction =
+  | { type: 'START'; now: number }
+  | { type: 'ADD_POINT'; now: number; lat: number; lng: number }
+  | { type: 'PAUSE'; now: number }
+  | { type: 'RESUME'; now: number }
+  | { type: 'FINISH'; now: number }
+  | { type: 'RESET' };
+
+// Reducer puro: toda a lógica de estado da corrida, sem tocar em GPS nem em
+// temporizador. O hook «useRunTracker» só liga isto aos eventos reais.
 export function trackerReducer(state: TrackerState, action: TrackerAction): TrackerState {
   switch (action.type) {
-    case 'START': {
-      if (state.status !== 'idle') return state;
-      const now = action.timestamp ?? Date.now();
-      return {
-        ...initialTrackerState,
-        status: 'running',
-        startedAt: now,
-      };
-    }
+    case 'START':
+      return { ...initialTrackerState, status: 'active', startedAt: action.now };
 
     case 'ADD_POINT': {
-      if (state.status !== 'running') return state;
-
-      const lastPoint = state.points[state.points.length - 1];
-      if (!lastPoint) {
-        return {
-          ...state,
-          points: [action.point],
-        };
-      }
-
-      if (!isPlausibleJump(lastPoint, action.point)) {
-        // Pulo espúrio de GPS descartado
-        return state;
-      }
-
-      const delta = haversineMeters(
-        lastPoint.latitude,
-        lastPoint.longitude,
-        action.point.latitude,
-        action.point.longitude,
-      );
-
+      if (state.status !== 'active' || state.startedAt === null) return state;
+      const point: RoutePoint = {
+        lat: action.lat,
+        lng: action.lng,
+        t: action.now - state.startedAt,
+      };
+      const last = state.route[state.route.length - 1];
+      if (!last) return { ...state, route: [point] };
+      if (!isPlausibleJump(last, point)) return state; // salto de GPS: ignora o ponto inteiro
       return {
         ...state,
-        points: [...state.points, action.point],
-        distanceMeters: Math.round(state.distanceMeters + delta),
+        route: [...state.route, point],
+        distanceMeters: state.distanceMeters + haversineMeters(last, point),
       };
     }
 
-    case 'PAUSE': {
-      if (state.status !== 'running') return state;
-      return {
-        ...state,
-        status: 'paused',
-        pausedAt: action.timestamp ?? Date.now(),
-      };
-    }
+    case 'PAUSE':
+      return state.status === 'active'
+        ? { ...state, status: 'paused', pauseStartedAt: action.now }
+        : state;
 
-    case 'RESUME': {
-      if (state.status !== 'paused') return state;
-      const now = action.timestamp ?? Date.now();
-      const pauseDuration = state.pausedAt ? Math.max(0, now - state.pausedAt) : 0;
+    case 'RESUME':
+      if (state.status !== 'paused' || state.pauseStartedAt === null) return state;
       return {
         ...state,
-        status: 'running',
-        pausedAt: null,
-        totalPausedMs: state.totalPausedMs + pauseDuration,
+        status: 'active',
+        pausedMs: state.pausedMs + (action.now - state.pauseStartedAt),
+        pauseStartedAt: null,
       };
-    }
 
     case 'FINISH': {
-      if (state.status !== 'running' && state.status !== 'paused') return state;
-      const now = action.timestamp ?? Date.now();
-      let additionalPause = 0;
-      if (state.status === 'paused' && state.pausedAt) {
-        additionalPause = Math.max(0, now - state.pausedAt);
-      }
+      if (state.status !== 'active' && state.status !== 'paused') return state;
+      const extraPause =
+        state.status === 'paused' && state.pauseStartedAt
+          ? action.now - state.pauseStartedAt
+          : 0;
       return {
         ...state,
         status: 'finished',
-        endedAt: now,
-        pausedAt: null,
-        totalPausedMs: state.totalPausedMs + additionalPause,
+        finishedAt: action.now,
+        pausedMs: state.pausedMs + extraPause,
+        pauseStartedAt: null,
       };
     }
 
@@ -116,24 +92,11 @@ export function trackerReducer(state: TrackerState, action: TrackerAction): Trac
   }
 }
 
-export function elapsedSeconds(
-  state: TrackerState,
-  currentTimestamp: number = Date.now(),
-): number {
+// Segundos decorridos de corrida de verdade (sem contar as pausas), até "now".
+export function elapsedSeconds(state: TrackerState, now: number): number {
   if (state.startedAt === null) return 0;
-
-  if (state.status === 'finished') {
-    const end = state.endedAt ?? currentTimestamp;
-    const activeMs = end - state.startedAt - state.totalPausedMs;
-    return Math.max(0, Math.floor(activeMs / 1000));
-  }
-
-  if (state.status === 'paused') {
-    const pauseTime = state.pausedAt ?? currentTimestamp;
-    const activeMs = pauseTime - state.startedAt - state.totalPausedMs;
-    return Math.max(0, Math.floor(activeMs / 1000));
-  }
-
-  const activeMs = currentTimestamp - state.startedAt - state.totalPausedMs;
-  return Math.max(0, Math.floor(activeMs / 1000));
+  const end = state.finishedAt ?? now;
+  const ongoingPause =
+    state.status === 'paused' && state.pauseStartedAt ? now - state.pauseStartedAt : 0;
+  return Math.max(0, (end - state.startedAt - state.pausedMs - ongoingPause) / 1000);
 }

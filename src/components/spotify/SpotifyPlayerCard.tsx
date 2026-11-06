@@ -1,191 +1,134 @@
-import React from 'react';
-import { View, Text, Image, TouchableOpacity, StyleSheet } from 'react-native';
-import { Ionicons, FontAwesome } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Card } from '@/components/Card';
 import { useSpotify } from '@/context/SpotifyContext';
-import { useSpotifyPlayer } from '@/hooks/useSpotifyPlayer';
-import { useTheme } from '@/theme';
-import { GlassSurface } from '../glass/GlassSurface';
-import { Button } from '../Button';
+import {
+  usePausePlayback,
+  useResumePlayback,
+  useSkipNext,
+  useSkipPrevious,
+  useNowPlaying,
+} from '@/hooks/useSpotifyPlayer';
+import { spacing, useTheme } from '@/theme';
 
+// Player compacto, em vidro, mostrado no Início e na tela de corrida. Some
+// sozinho se não houver conta conectada, e explica o que fazer se não houver
+// nada tocando.
 export function SpotifyPlayerCard() {
-  const { isConnected, connectSpotify } = useSpotify();
-  const { track, isPlaying, togglePlay, next, previous } = useSpotifyPlayer();
-  const { theme, isDark } = useTheme();
+  const { theme } = useTheme();
+  const { tokens, connect, connecting } = useSpotify();
+  const { data: track, isLoading } = useNowPlaying();
+  const pause = usePausePlayback();
+  const resume = useResumePlayback();
+  const next = useSkipNext();
+  const prev = useSkipPrevious();
 
-  if (!isConnected) {
+  if (!tokens) {
     return (
-      <GlassSurface style={styles.card} borderRadius={theme.radius.lg}>
-        <View style={styles.connectRow}>
-          <View style={[styles.spotifyLogoCircle, { backgroundColor: '#1DB954' }]}>
-            <Ionicons name="musical-notes" size={20} color="#FFFFFF" />
-          </View>
-          <View style={styles.connectInfo}>
-            <Text style={[styles.connectTitle, { color: theme.colors.text }]}>
-              Trilha Sonora da Corrida
-            </Text>
-            <Text style={[styles.connectSubtitle, { color: theme.colors.textSecondary }]}>
-              Conecte o Spotify para ouvir e sincronizar suas músicas
-            </Text>
-          </View>
+      <Card style={styles.card}>
+        <View style={styles.row}>
+          <Ionicons name="musical-notes" size={22} color={theme.primary} />
+          <Text style={[styles.hint, { color: theme.text }]}>
+            Conecte o Spotify para ouvir música durante a corrida.
+          </Text>
         </View>
-        <Button
-          title="Conectar Spotify"
-          onPress={connectSpotify}
-          variant="primary"
-          size="sm"
-          style={styles.connectButton}
-          icon={<FontAwesome name="spotify" size={18} color="#FFFFFF" />}
-        />
-      </GlassSurface>
+        <Pressable
+          accessibilityRole="button"
+          onPress={connect}
+          disabled={connecting}
+          style={[styles.connectBtn, { backgroundColor: theme.primary }]}
+        >
+          <Text style={styles.connectText}>
+            {connecting ? 'Conectando...' : 'Conectar Spotify'}
+          </Text>
+        </Pressable>
+      </Card>
+    );
+  }
+
+  if (!isLoading && !track) {
+    return (
+      <Card style={styles.card}>
+        <View style={styles.row}>
+          <Ionicons name="musical-note" size={22} color={theme.muted} />
+          <Text style={[styles.hint, { color: theme.muted }]}>
+            Nada tocando agora. Abra o Spotify e escolha uma música.
+          </Text>
+        </View>
+      </Card>
     );
   }
 
   return (
-    <GlassSurface style={styles.card} borderRadius={theme.radius.lg} glow>
-      <View style={styles.playerRow}>
-        {track?.albumCoverUrl ? (
-          <Image source={{ uri: track.albumCoverUrl }} style={styles.albumCover} />
+    <Card style={styles.card}>
+      <View style={styles.row}>
+        {track?.albumArt ? (
+          <Image source={{ uri: track.albumArt }} style={styles.art} />
         ) : (
-          <View
-            style={[
-              styles.albumCoverPlaceholder,
-              { backgroundColor: isDark ? '#222' : '#E5E5E5' },
-            ]}
-          >
-            <Ionicons name="musical-notes" size={24} color={theme.colors.textMuted} />
-          </View>
+          <View style={[styles.art, { backgroundColor: theme.primarySoft }]} />
         )}
-
-        <View style={styles.trackInfo}>
-          <Text
-            style={[styles.trackName, { color: theme.colors.text }]}
-            numberOfLines={1}
-          >
-            {track?.name ?? 'Nenhuma faixa reproduzindo'}
+        <View style={styles.info}>
+          <Text style={[styles.name, { color: theme.text }]} numberOfLines={1}>
+            {track?.name ?? 'Carregando...'}
           </Text>
-          <Text
-            style={[styles.artistName, { color: theme.colors.textSecondary }]}
-            numberOfLines={1}
-          >
-            {track?.artist ?? 'Abra o Spotify para sincronizar'}
+          <Text style={[styles.artist, { color: theme.muted }]} numberOfLines={1}>
+            {track?.artist ?? ''}
           </Text>
         </View>
       </View>
-
-      <View style={styles.controlsRow}>
-        <TouchableOpacity
-          onPress={previous}
-          style={styles.controlButton}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+      <View style={styles.controls}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Faixa anterior"
+          onPress={() => prev.mutate()}
         >
-          <Ionicons name="play-skip-back" size={22} color={theme.colors.text} />
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          onPress={togglePlay}
-          style={[
-            styles.playPauseButton,
-            {
-              backgroundColor: '#1DB954',
-              shadowColor: '#1DB954',
-            },
-          ]}
+          <Ionicons name="play-skip-back" size={26} color={theme.text} />
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={track?.isPlaying ? 'Pausar' : 'Tocar'}
+          onPress={() => (track?.isPlaying ? pause.mutate() : resume.mutate())}
+          style={[styles.playBtn, { backgroundColor: theme.primary }]}
         >
-          <Ionicons name={isPlaying ? 'pause' : 'play'} size={24} color="#FFFFFF" />
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          onPress={next}
-          style={styles.controlButton}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          <Ionicons
+            name={track?.isPlaying ? 'pause' : 'play'}
+            size={24}
+            color={theme.onPrimary}
+          />
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Próxima faixa"
+          onPress={() => next.mutate()}
         >
-          <Ionicons name="play-skip-forward" size={22} color={theme.colors.text} />
-        </TouchableOpacity>
+          <Ionicons name="play-skip-forward" size={26} color={theme.text} />
+        </Pressable>
       </View>
-    </GlassSurface>
+    </Card>
   );
 }
 
 const styles = StyleSheet.create({
-  card: {
-    padding: 14,
-    marginVertical: 8,
-  },
-  connectRow: {
+  card: { gap: spacing.md },
+  row: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  hint: { flex: 1, fontSize: 14 },
+  art: { width: 52, height: 52, borderRadius: 10 },
+  info: { flex: 1 },
+  name: { fontSize: 15, fontWeight: '700' },
+  artist: { fontSize: 13, marginTop: 2 },
+  controls: {
     flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  spotifyLogoCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
+    gap: spacing.lg,
   },
-  connectInfo: {
-    flex: 1,
-  },
-  connectTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  connectSubtitle: {
-    fontSize: 12,
-    marginTop: 2,
-  },
-  connectButton: {
-    marginTop: 4,
-  },
-  playerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  albumCover: {
+  playBtn: {
     width: 48,
     height: 48,
-    borderRadius: 8,
-    marginRight: 12,
-  },
-  albumCoverPlaceholder: {
-    width: 48,
-    height: 48,
-    borderRadius: 8,
+    borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
   },
-  trackInfo: {
-    flex: 1,
-  },
-  trackName: {
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  artistName: {
-    fontSize: 13,
-    marginTop: 2,
-  },
-  controlsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 12,
-    gap: 28,
-  },
-  controlButton: {
-    padding: 6,
-  },
-  playPauseButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35,
-    shadowRadius: 8,
-    elevation: 4,
-  },
+  connectBtn: { borderRadius: 999, paddingVertical: 12, alignItems: 'center' },
+  connectText: { color: '#FFF', fontWeight: '700' },
 });

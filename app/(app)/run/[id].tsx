@@ -1,297 +1,120 @@
-import React from 'react';
-import {
-  View,
-  Text,
-  ScrollView,
-  StyleSheet,
-  Alert,
-  Dimensions,
-  TouchableOpacity,
-} from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Screen } from '@/components/Screen';
-import { Card } from '@/components/Card';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { Alert, StyleSheet, Text, View } from 'react-native';
 import { Button } from '@/components/Button';
+import { Card } from '@/components/Card';
 import { RoutePath } from '@/components/RoutePath';
-import { LoadingView, ErrorState } from '@/components/StateViews';
-import { useRun, useDeleteRun } from '@/hooks/useRuns';
-import { useTheme } from '@/theme';
-import { formatDistance, formatDuration, formatPace } from '@/utils/geo';
+import { Screen } from '@/components/Screen';
+import { ErrorState, LoadingView } from '@/components/StateViews';
+import { useDeleteRun, useRun } from '@/hooks/useRuns';
+import { spacing, useTheme } from '@/theme';
+import {
+  estimateCalories,
+  formatDistance,
+  formatDuration,
+  formatPace,
+} from '@/utils/geo';
+import { friendlyError } from '@/utils/errors';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+function formatFullDate(iso: string) {
+  return new Date(iso).toLocaleString('pt-BR', { dateStyle: 'long', timeStyle: 'short' });
+}
 
 export default function RunDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { theme } = useTheme();
-  const { data: run, isLoading, error } = useRun(id as string);
-  const deleteMutation = useDeleteRun();
+  const { data: run, isLoading, isError, error, refetch } = useRun(id);
+  const del = useDeleteRun();
 
-  const handleDelete = () => {
-    Alert.alert(
-      'Excluir Corrida',
-      'Tem certeza de que deseja apagar este percurso? Esta ação não pode ser desfeita.',
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Excluir',
-          style: 'destructive',
-          onPress: async () => {
-            if (id) {
-              await deleteMutation.mutateAsync(id);
-              router.replace('/(app)/(tabs)/history');
-            }
-          },
-        },
-      ],
-    );
-  };
+  if (isLoading) return <LoadingView />;
+  if (isError || !run)
+    return <ErrorState message={friendlyError(error)} onRetry={refetch} />;
 
-  if (isLoading) {
-    return (
-      <Screen>
-        <LoadingView message="Carregando detalhes do percurso..." />
-      </Screen>
-    );
-  }
-
-  if (error || !run) {
-    return (
-      <Screen>
-        <ErrorState
-          title="Corrida não encontrada"
-          message="Não conseguimos carregar este registro."
-          onRetry={() => router.back()}
-        />
-      </Screen>
-    );
+  function confirmDelete() {
+    Alert.alert('Excluir corrida', 'Esta ação não pode ser desfeita.', [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Excluir',
+        style: 'destructive',
+        onPress: () =>
+          del.mutate(run!.id, {
+            onSuccess: () => router.back(),
+            onError: (e) => Alert.alert('Não foi possível excluir', friendlyError(e)),
+          }),
+      },
+    ]);
   }
 
   return (
-    <Screen>
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Top Header */}
-        <View style={styles.topBar}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-            <Ionicons name="arrow-back" size={24} color={theme.colors.text} />
-          </TouchableOpacity>
+    <Screen scroll edges={['bottom', 'left', 'right']}>
+      <Text style={[styles.date, { color: theme.muted }]}>
+        {formatFullDate(run.startedAt)}
+      </Text>
+      <Text style={[styles.distance, { color: theme.text }]}>
+        {formatDistance(run.distanceMeters)}
+      </Text>
 
-          <Text style={[styles.headerTitle, { color: theme.colors.text }]}>
-            Detalhes do Percurso
-          </Text>
+      <Card style={styles.mapCard}>
+        <RoutePath route={run.route} height={220} />
+      </Card>
 
-          <TouchableOpacity onPress={handleDelete} style={styles.deleteBtn}>
-            <Ionicons name="trash-outline" size={22} color={theme.colors.danger} />
-          </TouchableOpacity>
-        </View>
-
-        {/* Título & Horário */}
-        <View style={styles.titleSection}>
-          <Text style={[styles.runTitle, { color: theme.colors.text }]}>
-            {run.title || 'Corrida RotaFit'}
-          </Text>
-          <Text style={[styles.runTimestamp, { color: theme.colors.textSecondary }]}>
-            {new Date(run.started_at).toLocaleDateString('pt-BR', {
-              weekday: 'long',
-              day: '2-digit',
-              month: 'long',
-              year: 'numeric',
-              hour: '2-digit',
-              minute: '2-digit',
-            })}
-          </Text>
-        </View>
-
-        {/* Mapa da Rota SVG */}
-        <View style={styles.mapContainer}>
-          <RoutePath
-            points={run.route_points}
-            width={SCREEN_WIDTH - 40}
-            height={260}
-            strokeWidth={4.5}
-            showPins={true}
+      <Card style={styles.statsCard}>
+        <View style={styles.statsRow}>
+          <Stat label="Tempo" value={formatDuration(run.durationSeconds)} />
+          <Stat label="Ritmo médio" value={formatPace(run.avgPaceSecPerKm)} />
+          <Stat
+            label="Calorias"
+            value={`${estimateCalories(run.distanceMeters, run.durationSeconds)} kcal`}
           />
         </View>
+      </Card>
 
-        {/* Grade de Estatísticas */}
-        <View style={styles.gridContainer}>
-          <Card style={styles.gridCard} glow>
-            <Ionicons name="navigate-outline" size={22} color={theme.colors.primary} />
-            <Text style={[styles.gridValue, { color: theme.colors.primary }]}>
-              {formatDistance(run.distance_meters)}
-            </Text>
-            <Text style={[styles.gridLabel, { color: theme.colors.textSecondary }]}>
-              Distância Total
-            </Text>
-          </Card>
+      {run.spotifyTrackName ? (
+        <Card style={styles.trackCard}>
+          <Ionicons name="musical-notes" size={20} color={theme.primary} />
+          <Text style={[styles.track, { color: theme.text }]} numberOfLines={1}>
+            {run.spotifyTrackName}
+          </Text>
+        </Card>
+      ) : null}
 
-          <Card style={styles.gridCard}>
-            <Ionicons name="time-outline" size={22} color={theme.colors.textSecondary} />
-            <Text style={[styles.gridValue, { color: theme.colors.text }]}>
-              {formatDuration(run.duration_seconds)}
-            </Text>
-            <Text style={[styles.gridLabel, { color: theme.colors.textSecondary }]}>
-              Tempo Decorrido
-            </Text>
-          </Card>
-
-          <Card style={styles.gridCard}>
-            <Ionicons name="speedometer-outline" size={22} color={theme.colors.accent} />
-            <Text style={[styles.gridValue, { color: theme.colors.text }]}>
-              {formatPace(run.avg_pace_seconds_per_km || 0)}
-            </Text>
-            <Text style={[styles.gridLabel, { color: theme.colors.textSecondary }]}>
-              Ritmo Médio
-            </Text>
-          </Card>
-
-          <Card style={styles.gridCard}>
-            <Ionicons name="flame-outline" size={22} color={theme.colors.danger} />
-            <Text style={[styles.gridValue, { color: theme.colors.text }]}>
-              {run.calories ? `${run.calories} kcal` : '--'}
-            </Text>
-            <Text style={[styles.gridLabel, { color: theme.colors.textSecondary }]}>
-              Calorias Queimadas
-            </Text>
-          </Card>
-        </View>
-
-        {/* Trilha Sonora do Spotify associada */}
-        {run.spotify_track_name ? (
-          <Card style={styles.spotifyCard}>
-            <View style={styles.spotifyHeader}>
-              <Ionicons name="musical-notes" size={24} color="#1DB954" />
-              <View style={styles.spotifyInfo}>
-                <Text
-                  style={[styles.spotifyTagLabel, { color: theme.colors.textSecondary }]}
-                >
-                  TRILHA SONORA DESTA CORRIDA
-                </Text>
-                <Text style={[styles.spotifySong, { color: theme.colors.text }]}>
-                  {run.spotify_track_name}
-                </Text>
-                {run.spotify_artist_name ? (
-                  <Text
-                    style={[styles.spotifyArtist, { color: theme.colors.textSecondary }]}
-                  >
-                    {run.spotify_artist_name}
-                  </Text>
-                ) : null}
-              </View>
-            </View>
-          </Card>
-        ) : null}
-
-        {/* Rodapé com info técnica do percurso */}
-        <Text style={[styles.technicalInfo, { color: theme.colors.textMuted }]}>
-          {run.route_points?.length || 0} coordenadas de GPS registradas • RLS Autenticado
-        </Text>
-
-        <Button
-          title="Voltar ao Histórico"
-          variant="secondary"
-          onPress={() => router.back()}
-          style={styles.backButtonBottom}
-        />
-      </ScrollView>
+      <Button
+        title="Excluir corrida"
+        variant="danger"
+        onPress={confirmDelete}
+        loading={del.isPending}
+        style={styles.deleteBtn}
+      />
     </Screen>
   );
 }
 
+function Stat({ label, value }: { label: string; value: string }) {
+  const { theme } = useTheme();
+  return (
+    <View style={styles.stat}>
+      <Text style={[styles.statValue, { color: theme.text }]}>{value}</Text>
+      <Text style={[styles.statLabel, { color: theme.muted }]}>{label}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  scrollContent: {
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 48,
-  },
-  topBar: {
+  date: { fontSize: 14 },
+  distance: { fontSize: 36, fontWeight: '800', marginBottom: spacing.md },
+  mapCard: { padding: 0, overflow: 'hidden', marginBottom: spacing.md },
+  statsCard: { marginBottom: spacing.md },
+  statsRow: { flexDirection: 'row', justifyContent: 'space-around' },
+  stat: { alignItems: 'center' },
+  statValue: { fontSize: 18, fontWeight: '800' },
+  statLabel: { fontSize: 12, marginTop: 2 },
+  trackCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 16,
+    gap: spacing.sm,
+    marginBottom: spacing.md,
   },
-  backBtn: {
-    padding: 6,
-  },
-  headerTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  deleteBtn: {
-    padding: 6,
-  },
-  titleSection: {
-    marginBottom: 16,
-  },
-  runTitle: {
-    fontSize: 26,
-    fontWeight: '900',
-  },
-  runTimestamp: {
-    fontSize: 13,
-    marginTop: 4,
-    textTransform: 'capitalize',
-  },
-  mapContainer: {
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  gridContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-    marginBottom: 16,
-  },
-  gridCard: {
-    width: (SCREEN_WIDTH - 52) / 2,
-    padding: 16,
-    alignItems: 'flex-start',
-  },
-  gridValue: {
-    fontSize: 20,
-    fontWeight: '900',
-    marginTop: 8,
-    marginBottom: 2,
-  },
-  gridLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  spotifyCard: {
-    padding: 14,
-    marginBottom: 20,
-  },
-  spotifyHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  spotifyInfo: {
-    marginLeft: 12,
-    flex: 1,
-  },
-  spotifyTagLabel: {
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  spotifySong: {
-    fontSize: 15,
-    fontWeight: '700',
-    marginTop: 2,
-  },
-  spotifyArtist: {
-    fontSize: 13,
-  },
-  technicalInfo: {
-    fontSize: 12,
-    textAlign: 'center',
-    marginBottom: 20,
-  },
-  backButtonBottom: {
-    width: '100%',
-  },
+  track: { flex: 1, fontSize: 14, fontWeight: '600' },
+  deleteBtn: { marginTop: spacing.sm },
 });

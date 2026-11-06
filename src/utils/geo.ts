@@ -1,159 +1,97 @@
-import { RoutePoint } from '@/types';
+import type { RoutePoint } from '@/types';
 
-const EARTH_RADIUS_METERS = 6371000;
+const EARTH_RADIUS_M = 6371000;
+const toRad = (deg: number) => (deg * Math.PI) / 180;
 
-function toRad(deg: number): number {
-  return (deg * Math.PI) / 180;
+// Distância em metros entre dois pontos GPS (fórmula de Haversine).
+export function haversineMeters(a: RoutePoint, b: RoutePoint): number {
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const h =
+    Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * EARTH_RADIUS_M * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
-export function haversineMeters(
-  lat1: number,
-  lon1: number,
-  lat2: number,
-  lon2: number,
-): number {
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  const rLat1 = toRad(lat1);
-  const rLat2 = toRad(lat2);
+// O GPS "pula" de vez em quando (ruído de sinal). Julgamos pela VELOCIDADE
+// implícita entre dois pontos, não por uma combinação fixa de distância e
+// tempo: um intervalo maior entre leituras não deveria "perdoar" um salto
+// grande, e é exatamente esse o erro que uma regra de "menos de X segundos"
+// comete. 10 m/s (36 km/h) já é mais rápido que qualquer corrida recreativa
+// sustentada, com folga para o ruído normal do GPS.
+const MAX_SPEED_MPS = 10;
 
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(rLat1) * Math.cos(rLat2) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
-
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return EARTH_RADIUS_METERS * c;
+export function isPlausibleJump(prev: RoutePoint, next: RoutePoint): boolean {
+  const dt = next.t - prev.t;
+  if (dt <= 0) return false;
+  const speed = haversineMeters(prev, next) / (dt / 1000);
+  return speed <= MAX_SPEED_MPS;
 }
 
-export function isPlausibleJump(
-  p1: RoutePoint,
-  p2: RoutePoint,
-  maxSpeedMps: number = 10, // ~36 km/h, limite humano para corrida
-): boolean {
-  const dtSeconds = Math.abs(p2.timestamp - p1.timestamp) / 1000;
-  if (dtSeconds <= 0) return false;
-
-  const dist = haversineMeters(p1.latitude, p1.longitude, p2.latitude, p2.longitude);
-
-  const speed = dist / dtSeconds;
-  return speed <= maxSpeedMps;
-}
-
-export function routeDistanceMeters(points: RoutePoint[]): number {
-  if (points.length < 2) return 0;
-
+// Soma a distância de uma rota inteira, ponto a ponto, descartando saltos implausíveis.
+export function routeDistanceMeters(route: RoutePoint[]): number {
   let total = 0;
-  for (let i = 1; i < points.length; i++) {
-    const prev = points[i - 1];
-    const curr = points[i];
-    if (isPlausibleJump(prev, curr)) {
-      total += haversineMeters(
-        prev.latitude,
-        prev.longitude,
-        curr.latitude,
-        curr.longitude,
-      );
-    }
+  for (let i = 1; i < route.length; i++) {
+    const prev = route[i - 1];
+    const next = route[i];
+    if (isPlausibleJump(prev, next)) total += haversineMeters(prev, next);
   }
-
-  return Math.round(total);
+  return total;
 }
 
-export function averagePaceSecPerKm(durationSec: number, distanceMeters: number): number {
-  if (distanceMeters <= 0 || durationSec <= 0) return 0;
-  const km = distanceMeters / 1000;
-  return Math.round(durationSec / km);
+// Ritmo médio em segundos por quilômetro. null se não houve distância percorrida.
+export function averagePaceSecPerKm(
+  distanceMeters: number,
+  durationSeconds: number,
+): number | null {
+  if (distanceMeters <= 0) return null;
+  return durationSeconds / (distanceMeters / 1000);
 }
 
 export function formatDistance(meters: number): string {
-  if (meters < 1000) {
-    return `${Math.round(meters)} m`;
-  }
-  const km = (meters / 1000).toFixed(2);
-  return `${km} km`;
+  return meters >= 1000
+    ? `${(meters / 1000).toFixed(2).replace('.', ',')} km`
+    : `${Math.round(meters)} m`;
 }
+
+const pad = (n: number) => String(Math.floor(n)).padStart(2, '0');
 
 export function formatDuration(totalSeconds: number): string {
-  const sec = Math.max(0, Math.floor(totalSeconds));
-  const hours = Math.floor(sec / 3600);
-  const minutes = Math.floor((sec % 3600) / 60);
-  const remainingSec = sec % 60;
-
-  const pad = (n: number) => n.toString().padStart(2, '0');
-
-  if (hours > 0) {
-    return `${hours}:${pad(minutes)}:${pad(remainingSec)}`;
-  }
-  return `${pad(minutes)}:${pad(remainingSec)}`;
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = Math.floor(totalSeconds % 60);
+  return h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
 }
 
-export function formatPace(paceSecPerKm: number): string {
-  if (!paceSecPerKm || paceSecPerKm <= 0 || !isFinite(paceSecPerKm)) {
-    return `--'--" /km`;
-  }
-  const min = Math.floor(paceSecPerKm / 60);
-  const sec = Math.floor(paceSecPerKm % 60);
-  const pad = (n: number) => n.toString().padStart(2, '0');
-  return `${pad(min)}'${pad(sec)}" /km`;
+// "5m30s/km" — formato comum em apps de corrida.
+export function formatPace(secPerKm: number | null): string {
+  if (secPerKm === null || !Number.isFinite(secPerKm)) return '—';
+  const m = Math.floor(secPerKm / 60);
+  const s = Math.round(secPerKm % 60);
+  return `${m}'${String(s).padStart(2, '0')}"/km`;
 }
 
+// Estimativa simples de calorias (MET de corrida ~9.8 para ritmo moderado),
+// só para dar um número de referência — não é um cálculo clínico.
 export function estimateCalories(
   distanceMeters: number,
-  _durationSec?: number,
-  weightKg: number = 70,
+  durationSeconds: number,
+  weightKg = 70,
 ): number {
-  if (distanceMeters <= 0) return 0;
-  const km = distanceMeters / 1000;
-  // Regra padrão de gasto calórico de corrida por km por peso corporal
-  return Math.round(km * weightKg * 1.036);
+  if (durationSeconds <= 0) return 0;
+  const MET = 9.8;
+  const hours = durationSeconds / 3600;
+  return Math.round(MET * weightKg * hours);
 }
 
-// Algoritmo Ramer-Douglas-Peucker para simplificação de rota
-export function simplifyRoute(
-  points: RoutePoint[],
-  toleranceMeters: number = 2,
-): RoutePoint[] {
-  if (points.length <= 2) return points;
-
-  let maxDistance = 0;
-  let index = 0;
-  const end = points.length - 1;
-
-  for (let i = 1; i < end; i++) {
-    const d = perpendicularDistance(points[i], points[0], points[end]);
-    if (d > maxDistance) {
-      index = i;
-      maxDistance = d;
-    }
-  }
-
-  if (maxDistance > toleranceMeters) {
-    const recResults1 = simplifyRoute(points.slice(0, index + 1), toleranceMeters);
-    const recResults2 = simplifyRoute(points.slice(index), toleranceMeters);
-    return recResults1.slice(0, recResults1.length - 1).concat(recResults2);
-  }
-
-  return [points[0], points[end]];
-}
-
-function perpendicularDistance(p: RoutePoint, p1: RoutePoint, p2: RoutePoint): number {
-  const x = p.longitude;
-  const y = p.latitude;
-  const x1 = p1.longitude;
-  const y1 = p1.latitude;
-  const x2 = p2.longitude;
-  const y2 = p2.latitude;
-
-  const dx = x2 - x1;
-  const dy = y2 - y1;
-
-  if (dx === 0 && dy === 0) {
-    return haversineMeters(y, x, y1, x1);
-  }
-
-  const numerator = Math.abs(dy * x - dx * y + x2 * y1 - y2 * x1);
-  const denominator = Math.sqrt(dy * dy + dx * dx);
-  // Escala aproximada em metros usando a latitude média
-  const degDist = numerator / denominator;
-  return degDist * 111320;
+// Reduz o número de pontos para desenhar (Douglas-Peucker simplificado por
+// amostragem): mantém o traçado reconhecível sem desenhar milhares de pontos.
+export function simplifyRoute(route: RoutePoint[], maxPoints = 200): RoutePoint[] {
+  if (route.length <= maxPoints) return route;
+  const step = route.length / maxPoints;
+  const result: RoutePoint[] = [];
+  for (let i = 0; i < maxPoints; i++) result.push(route[Math.floor(i * step)]);
+  result.push(route[route.length - 1]);
+  return result;
 }

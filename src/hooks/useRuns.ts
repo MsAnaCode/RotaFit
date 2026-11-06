@@ -1,52 +1,39 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { listRuns, getRun, saveRun, deleteRun, getWeeklyStats } from '@/services/runs';
-import { SaveRunInput } from '@/types';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useAuth } from '@/context/AuthContext';
+import { deleteRun, getRun, getWeeklyStats, listRuns, saveRun } from '@/services/runs';
+import { averagePaceSecPerKm } from '@/utils/geo';
+import type { SaveRunInput } from '@/types';
 
-export const RUNS_QUERY_KEY = ['runs'];
-export const WEEKLY_STATS_KEY = ['weekly_stats'];
+export const useRuns = () => useQuery({ queryKey: ['runs', 'list'], queryFn: listRuns });
 
-export function useRuns() {
+export function useRun(id: string | undefined) {
   return useQuery({
-    queryKey: RUNS_QUERY_KEY,
-    queryFn: listRuns,
-  });
-}
-
-export function useRun(id: string) {
-  return useQuery({
-    queryKey: ['run', id],
-    queryFn: () => getRun(id),
+    queryKey: ['runs', 'detail', id],
+    queryFn: () => getRun(id as string),
     enabled: Boolean(id),
   });
 }
 
-export function useWeeklyStats() {
-  return useQuery({
-    queryKey: WEEKLY_STATS_KEY,
-    queryFn: getWeeklyStats,
-  });
-}
+export const useWeeklyStats = () =>
+  useQuery({ queryKey: ['runs', 'weekly-stats'], queryFn: getWeeklyStats });
 
 export function useSaveRun() {
+  const { user } = useAuth();
   const queryClient = useQueryClient();
-
   return useMutation({
-    mutationFn: (input: SaveRunInput) => saveRun(input),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: RUNS_QUERY_KEY });
-      queryClient.invalidateQueries({ queryKey: WEEKLY_STATS_KEY });
+    mutationFn: (input: SaveRunInput) => {
+      if (!user) throw new Error('Faça login para salvar a corrida.');
+      const pace = averagePaceSecPerKm(input.distanceMeters, input.durationSeconds);
+      return saveRun(input, user.id, pace);
     },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['runs'] }),
   });
 }
 
 export function useDeleteRun() {
   const queryClient = useQueryClient();
-
   return useMutation({
     mutationFn: (id: string) => deleteRun(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: RUNS_QUERY_KEY });
-      queryClient.invalidateQueries({ queryKey: WEEKLY_STATS_KEY });
-    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['runs'] }),
   });
 }

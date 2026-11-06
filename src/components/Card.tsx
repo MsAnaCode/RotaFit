@@ -1,23 +1,28 @@
-import React from 'react';
-import { StyleSheet, ViewStyle } from 'react-native';
-import { GlassSurface, GlassSurfaceProps } from './glass/GlassSurface';
-import { useTheme } from '@/theme';
+import type { ReactNode } from 'react';
+import { StyleSheet } from 'react-native';
+import type { StyleProp, ViewStyle } from 'react-native';
+import { GlassSurface } from '@/components/glass/GlassSurface';
+import { radius, spacing } from '@/theme';
 
-export interface CardProps extends GlassSurfaceProps {
-  padding?: number;
+interface CardProps {
+  children: ReactNode;
+  style?: StyleProp<ViewStyle>;
+  tint?: string;
 }
 
-export function Card({ padding, style, children, ...rest }: CardProps) {
-  const { theme } = useTheme();
-  const cardPadding = padding !== undefined ? padding : theme.spacing.md;
-
+// Cartão em vidro líquido, usado em toda a interface (resumo da corrida,
+// player do Spotify, histórico, formulários).
+export function Card({ children, style, tint }: CardProps) {
   return (
     <GlassSurface
-      style={[{ padding: cardPadding }, style]}
-      borderRadius={theme.radius.lg}
-      {...rest}
+      tint={tint}
+      radius={radius.lg}
+      style={[styles.pad, style]}
+      intensity={30}
     >
       {children}
     </GlassSurface>
   );
 }
+
+const styles = StyleSheet.create({ pad: { padding: spacing.md } });

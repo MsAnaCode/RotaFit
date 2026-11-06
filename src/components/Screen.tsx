@@ -1,47 +1,48 @@
-import React from 'react';
-import { StyleSheet, View, ViewStyle } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useTheme } from '@/theme';
+import type { ReactNode } from 'react';
+import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import type { Edge } from 'react-native-safe-area-context';
+import { spacing, useTheme } from '@/theme';
 
 interface ScreenProps {
-  children: React.ReactNode;
-  style?: ViewStyle;
-  contentContainerStyle?: ViewStyle;
-  edges?: ('top' | 'right' | 'bottom' | 'left')[];
+  children: ReactNode;
+  scroll?: boolean;
+  edges?: Edge[];
 }
 
+// Fundo em degradê sutil (o "ambiente" por trás do vidro): sem ele, os
+// componentes de vidro não têm nada translúcido para revelar.
 export function Screen({
   children,
-  style,
-  contentContainerStyle,
-  edges = ['top'],
+  scroll = false,
+  edges = ['top', 'left', 'right'],
 }: ScreenProps) {
-  const { theme, isDark } = useTheme();
-
+  const { theme } = useTheme();
   return (
-    <View style={[styles.container, style]}>
-      <StatusBar style={isDark ? 'light' : 'dark'} />
-      <LinearGradient
-        colors={[theme.colors.bgStart, theme.colors.bgEnd]}
-        start={{ x: 0.1, y: 0 }}
-        end={{ x: 0.9, y: 1 }}
-        style={StyleSheet.absoluteFill}
-      />
-      <SafeAreaView edges={edges} style={[styles.safeArea, contentContainerStyle]}>
-        {children}
+    <LinearGradient colors={[theme.background, theme.backgroundAlt]} style={styles.flex}>
+      <SafeAreaView style={styles.flex} edges={edges}>
+        {scroll ? (
+          <KeyboardAvoidingView
+            style={styles.flex}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          >
+            <ScrollView
+              contentContainerStyle={styles.content}
+              keyboardShouldPersistTaps="handled"
+            >
+              {children}
+            </ScrollView>
+          </KeyboardAvoidingView>
+        ) : (
+          children
+        )}
       </SafeAreaView>
-    </View>
+    </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    position: 'relative',
-  },
-  safeArea: {
-    flex: 1,
-  },
+  flex: { flex: 1 },
+  content: { padding: spacing.md, flexGrow: 1 },
 });

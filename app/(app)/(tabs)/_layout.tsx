@@ -1,77 +1,53 @@
-import React from 'react';
-import { Tabs } from 'expo-router';
-import { StyleSheet, Platform } from 'react-native';
-import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
+import { BlurView } from 'expo-blur';
+import { Tabs } from 'expo-router';
+import { StyleSheet } from 'react-native';
+import type { ColorValue } from 'react-native';
 import { useTheme } from '@/theme';
+import type { IconName } from '@/utils/icons';
 
+function tabIcon(name: IconName) {
+  return ({ color, size }: { color: ColorValue; size: number }) => (
+    <Ionicons name={name} size={size} color={color as string} />
+  );
+}
+
+// A barra de abas também é vidro: um blur cobrindo toda a barra, sem fundo opaco.
 export default function TabsLayout() {
-  const { theme, isDark } = useTheme();
+  const { theme } = useTheme();
 
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: theme.colors.tabBarActive,
-        tabBarInactiveTintColor: theme.colors.tabBarInactive,
+        tabBarActiveTintColor: theme.primary,
+        tabBarInactiveTintColor: theme.muted,
         tabBarStyle: {
           position: 'absolute',
-          borderTopWidth: 1,
-          borderTopColor: theme.colors.tabBarBorder,
-          backgroundColor: Platform.OS === 'web' ? theme.colors.tabBarBg : 'transparent',
+          backgroundColor: 'transparent',
+          borderTopWidth: 0,
           elevation: 0,
-          height: Platform.OS === 'ios' ? 84 : 64,
-          paddingBottom: Platform.OS === 'ios' ? 28 : 10,
-          paddingTop: 10,
         },
-        tabBarBackground: () =>
-          Platform.OS !== 'web' ? (
-            <BlurView
-              intensity={theme.blur.tabBar}
-              tint={isDark ? 'dark' : 'light'}
-              style={StyleSheet.absoluteFill}
-            />
-          ) : null,
+        tabBarBackground: () => (
+          <BlurView
+            intensity={50}
+            tint={theme.mode === 'dark' ? 'dark' : 'light'}
+            style={StyleSheet.absoluteFill}
+          />
+        ),
       }}
     >
       <Tabs.Screen
         name="index"
-        options={{
-          title: 'Início',
-          tabBarIcon: ({ color, size, focused }) => (
-            <Ionicons
-              name={focused ? 'flame' : 'flame-outline'}
-              size={size}
-              color={color as string}
-            />
-          ),
-        }}
+        options={{ title: 'Início', tabBarIcon: tabIcon('home') }}
       />
       <Tabs.Screen
         name="history"
-        options={{
-          title: 'Histórico',
-          tabBarIcon: ({ color, size, focused }) => (
-            <Ionicons
-              name={focused ? 'bar-chart' : 'bar-chart-outline'}
-              size={size}
-              color={color as string}
-            />
-          ),
-        }}
+        options={{ title: 'Histórico', tabBarIcon: tabIcon('time') }}
       />
       <Tabs.Screen
         name="profile"
-        options={{
-          title: 'Perfil',
-          tabBarIcon: ({ color, size, focused }) => (
-            <Ionicons
-              name={focused ? 'person' : 'person-outline'}
-              size={size}
-              color={color as string}
-            />
-          ),
-        }}
+        options={{ title: 'Perfil', tabBarIcon: tabIcon('person') }}
       />
     </Tabs>
   );

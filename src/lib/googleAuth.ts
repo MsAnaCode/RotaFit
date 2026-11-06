@@ -1,65 +1,42 @@
-import * as WebBrowser from 'expo-web-browser';
+import * as QueryParams from 'expo-auth-session/build/QueryParams';
 import * as AuthSession from 'expo-auth-session';
-import { supabase } from './supabase';
+import * as WebBrowser from 'expo-web-browser';
+import { supabase } from '@/lib/supabase';
 
 WebBrowser.maybeCompleteAuthSession();
 
-export async function signInWithGoogleOAuth() {
-  const redirectUri = AuthSession.makeRedirectUri({
-    scheme: 'rotafit',
-    path: 'auth/callback',
-  });
+// Link de volta para o app depois do login (esquema "rotafit://").
+export const authRedirectUri = AuthSession.makeRedirectUri({ scheme: 'rotafit' });
 
+// Login com Google, delegado ao próprio Supabase: o app nunca vê um client
+// secret do Google. O Supabase (configurado em Authentication → Providers →
+// Google, com as chaves do Google Cloud) devolve uma URL de login; abrimos
+// essa URL numa aba controlada (WebBrowser) e, ao voltar para o app pelo
+// esquema "rotafit://", extraímos os tokens da própria URL de retorno.
+export async function signInWithGoogle(): Promise<void> {
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
-    options: {
-      redirectTo: redirectUri,
-      skipBrowserRedirect: true,
-      queryParams: {
-        access_type: 'offline',
-        prompt: 'consent',
-      },
-    },
+    options: { redirectTo: authRedirectUri, skipBrowserRedirect: true },
   });
+  if (error) throw error;
+  if (!data.url) throw new Error('Não foi possível iniciar o login com o Google.');
 
-  if (error) {
-    throw error;
+  const result = await WebBrowser.openAuthSessionAsync(data.url, authRedirectUri);
+  if (result.type !== 'success' || !result.url) {
+    if (result.type === 'cancel' || result.type === 'dismiss') return; // usuário cancelou
+    throw new Error('O login com o Google não foi concluído.');
   }
 
-  if (!data?.url) {
-    throw new Error('Não foi possível obter a URL de autorização do Google.');
-  }
+  const { params, errorCode } = QueryParams.getQueryParams(result.url);
+  if (errorCode) throw new Error(params.error_description ?? errorCode);
 
-  const result = await WebBrowser.openAuthSessionAsync(data.url, redirectUri);
+  const { access_token: accessToken, refresh_token: refreshToken } = params;
+  if (!accessToken || !refreshToken)
+    throw new Error('O Google não devolveu uma sessão válida.');
 
-  if (result.type === 'success' && result.url) {
-    const url = result.url;
-
-    // Trata resposta em query params (?code=...)
-    const queryParams = new URL(url).searchParams;
-    const code = queryParams.get('code');
-    if (code) {
-      const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
-      if (exchangeError) throw exchangeError;
-      return;
-    }
-
-    // Trata resposta em hash fragment (#access_token=...&refresh_token=...)
-    const hash = url.split('#')[1];
-    if (hash) {
-      const params = new URLSearchParams(hash);
-      const accessToken = params.get('access_token');
-      const refreshToken = params.get('refresh_token');
-
-      if (accessToken && refreshToken) {
-        const { error: sessionError } = await supabase.auth.setSession({
-          access_token: accessToken,
-          refresh_token: refreshToken,
-        });
-        if (sessionError) throw sessionError;
-      }
-    }
-  } else if (result.type === 'cancel') {
-    throw new Error('Login cancelado pelo usuário.');
-  }
+  const { error: sessionError } = await supabase.auth.setSession({
+    access_token: accessToken,
+    refresh_token: refreshToken,
+  });
+  if (sessionError) throw sessionError;
 }

@@ -1,98 +1,82 @@
-import React from 'react';
-import {
-  StyleSheet,
-  View,
-  ViewProps,
-  Platform,
-  StyleProp,
-  ViewStyle,
-} from 'react-native';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Platform, StyleSheet, View } from 'react-native';
+import type { StyleProp, ViewStyle } from 'react-native';
 import { useTheme } from '@/theme';
 
-export interface GlassSurfaceProps extends ViewProps {
+interface GlassSurfaceProps {
+  children: React.ReactNode;
+  style?: StyleProp<ViewStyle>;
+  radius?: number;
+  tint?: string; // cor de destaque do vidro (ex.: cor do time, do status)
   intensity?: number;
-  glow?: boolean;
-  borderTint?: string;
-  borderRadius?: number;
-  highlightOpacity?: number;
-  children?: React.ReactNode;
+  opacity?: number; // 0 a 1: quanto mais alto, mais sólida a cor (menos "vidro")
 }
 
+// A peça-base do estilo Liquid Glass: um vidro fosco (BlurView) com um brilho
+// diagonal no topo (LinearGradient) e uma borda clara fina, imitando reflexo.
+// Android não desfoca de verdade como o iOS, então ali o BlurView já cai para
+// uma cor semitransparente sólida — ainda assim o brilho e a borda vendem o efeito.
 export function GlassSurface({
-  intensity,
-  glow = false,
-  borderTint,
-  borderRadius,
-  highlightOpacity,
-  style,
   children,
-  ...rest
+  style,
+  radius = 24,
+  tint,
+  intensity = 40,
+  opacity,
 }: GlassSurfaceProps) {
-  const { theme, isDark } = useTheme();
-
-  const finalRadius = borderRadius ?? theme.radius.md;
-  const finalIntensity = intensity ?? theme.blur.card;
-  const borderColor = borderTint ?? theme.colors.cardBorder;
-  const glowShadow = glow
-    ? {
-        shadowColor: theme.colors.primary,
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: isDark ? 0.45 : 0.25,
-        shadowRadius: 16,
-        elevation: 8,
-      }
-    : {};
-
-  const highlightAlpha = highlightOpacity ?? (isDark ? 0.18 : 0.45);
+  const { theme } = useTheme();
+  const glassTint = tint ?? theme.glass;
 
   return (
-    <View
-      style={[
-        styles.outerContainer,
-        {
-          borderRadius: finalRadius,
-          borderColor,
-          backgroundColor: Platform.OS === 'web' ? theme.colors.cardBg : 'transparent',
-        },
-        glowShadow,
-        style,
-      ]}
-      {...rest}
-    >
-      {Platform.OS !== 'web' ? (
-        <BlurView
-          intensity={finalIntensity}
-          tint={isDark ? 'dark' : 'light'}
-          style={[StyleSheet.absoluteFill, { borderRadius: finalRadius }]}
-        />
-      ) : null}
-
-      <LinearGradient
-        colors={[`rgba(255, 255, 255, ${highlightAlpha})`, 'rgba(255, 255, 255, 0)']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 0, y: 0.7 }}
-        style={[styles.highlight, { borderRadius: finalRadius }]}
-        pointerEvents="none"
+    <View style={[{ borderRadius: radius, overflow: 'hidden' }, style]}>
+      <BlurView
+        intensity={intensity}
+        tint={theme.mode === 'dark' ? 'dark' : 'light'}
+        style={StyleSheet.absoluteFill}
       />
-
-      <View style={[styles.content, { borderRadius: finalRadius }]}>{children}</View>
+      <View
+        style={[
+          StyleSheet.absoluteFill,
+          {
+            backgroundColor: glassTint,
+            opacity: opacity ?? (theme.mode === 'dark' ? 0.55 : 0.5),
+          },
+        ]}
+      />
+      <LinearGradient
+        colors={[theme.glassHighlight, 'transparent']}
+        start={{ x: 0.1, y: 0 }}
+        end={{ x: 0.7, y: 0.8 }}
+        style={StyleSheet.absoluteFill}
+      />
+      <View
+        pointerEvents="none"
+        style={[
+          StyleSheet.absoluteFill,
+          { borderRadius: radius, borderWidth: 1, borderColor: theme.glassBorder },
+        ]}
+      />
+      <View style={{ borderRadius: radius }}>{children}</View>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  outerContainer: {
-    borderWidth: 1,
-    overflow: 'hidden',
-    position: 'relative',
-  },
-  highlight: {
-    ...StyleSheet.absoluteFill,
-    height: '45%',
-  },
-  content: {
-    width: '100%',
-  },
-});
+// Sombra colorida por baixo do vidro — o "glow" que dá profundidade ao efeito.
+export function glassShadow(color: string): ViewStyle {
+  return Platform.select<ViewStyle>({
+    ios: {
+      shadowColor: color,
+      shadowOpacity: 0.35,
+      shadowRadius: 16,
+      shadowOffset: { width: 0, height: 8 },
+    },
+    android: { elevation: 6 },
+    default: {
+      shadowColor: color,
+      shadowOpacity: 0.35,
+      shadowRadius: 16,
+      shadowOffset: { width: 0, height: 8 },
+    },
+  }) as ViewStyle;
+}

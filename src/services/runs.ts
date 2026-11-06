@@ -1,174 +1,93 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '@/lib/supabase';
-import { Run, SaveRunInput, WeeklyStats } from '@/types';
+import type { Run, SaveRunInput } from '@/types';
 
-const LOCAL_RUNS_KEY = 'rotafit.local_runs';
-
-async function getLocalRuns(): Promise<Run[]> {
-  try {
-    const raw = await AsyncStorage.getItem(LOCAL_RUNS_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
+interface RunRow {
+  id: string;
+  started_at: string;
+  ended_at: string;
+  distance_meters: number;
+  duration_seconds: number;
+  avg_pace_sec_per_km: number | null;
+  route: unknown;
+  spotify_track_name: string | null;
 }
 
-async function saveLocalRuns(runs: Run[]): Promise<void> {
-  await AsyncStorage.setItem(LOCAL_RUNS_KEY, JSON.stringify(runs));
+function toRun(row: RunRow): Run {
+  return {
+    id: row.id,
+    startedAt: row.started_at,
+    endedAt: row.ended_at,
+    distanceMeters: Number(row.distance_meters),
+    durationSeconds: row.duration_seconds,
+    avgPaceSecPerKm:
+      row.avg_pace_sec_per_km === null ? null : Number(row.avg_pace_sec_per_km),
+    route: Array.isArray(row.route) ? (row.route as Run['route']) : [],
+    spotifyTrackName: row.spotify_track_name,
+  };
 }
 
 export async function listRuns(): Promise<Run[]> {
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  const localRuns = await getLocalRuns();
-
-  if (!session) {
-    return localRuns.sort(
-      (a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime(),
-    );
-  }
-
   const { data, error } = await supabase
     .from('runs')
     .select('*')
     .order('started_at', { ascending: false });
-
-  if (error) {
-    // Se o banco falhar ou estiver offline, faz fallback para local
-    return localRuns;
-  }
-
-  return (data as Run[]) || [];
+  if (error) throw error;
+  return (data as RunRow[]).map(toRun);
 }
 
-export async function getRun(id: string): Promise<Run | null> {
-  const localRuns = await getLocalRuns();
-  const local = localRuns.find((r) => r.id === id);
-  if (local) return local;
-
+export async function getRun(id: string): Promise<Run> {
   const { data, error } = await supabase.from('runs').select('*').eq('id', id).single();
-
-  if (error || !data) {
-    return null;
-  }
-
-  return data as Run;
+  if (error) throw error;
+  return toRun(data as RunRow);
 }
 
-export async function saveRun(input: SaveRunInput): Promise<Run> {
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  const userId = session?.user?.id ?? '00000000-0000-0000-0000-000000000001';
-
-  const newRun: Run = {
-    id: 'run-' + Date.now(),
-    user_id: userId,
-    title: input.title || 'Corrida RotaFit',
-    started_at: input.started_at,
-    ended_at: input.ended_at,
-    duration_seconds: input.duration_seconds,
-    distance_meters: input.distance_meters,
-    avg_pace_seconds_per_km: input.avg_pace_seconds_per_km ?? null,
-    calories: input.calories ?? null,
-    route_points: input.route_points,
-    spotify_track_uri: input.spotify_track_uri ?? null,
-    spotify_track_name: input.spotify_track_name ?? null,
-    spotify_artist_name: input.spotify_artist_name ?? null,
-    created_at: new Date().toISOString(),
-  };
-
-  // Salva localmente primeiro
-  const localRuns = await getLocalRuns();
-  await saveLocalRuns([newRun, ...localRuns]);
-
-  if (session) {
-    try {
-      const { data, error } = await supabase
-        .from('runs')
-        .insert({
-          title: newRun.title,
-          started_at: newRun.started_at,
-          ended_at: newRun.ended_at,
-          duration_seconds: newRun.duration_seconds,
-          distance_meters: newRun.distance_meters,
-          avg_pace_seconds_per_km: newRun.avg_pace_seconds_per_km,
-          calories: newRun.calories,
-          route_points: newRun.route_points,
-          spotify_track_uri: newRun.spotify_track_uri,
-          spotify_track_name: newRun.spotify_track_name,
-          spotify_artist_name: newRun.spotify_artist_name,
-        })
-        .select()
-        .single();
-
-      if (!error && data) {
-        return data as Run;
-      }
-    } catch {
-      // Retorna a salva localmente se banco estiver inacessível
-    }
-  }
-
-  return newRun;
+// O usuário escreve direto (não há preço nem terceiro envolvido); a política
+// de RLS confere que «user_id» só pode ser o do próprio usuário.
+export async function saveRun(
+  input: SaveRunInput,
+  userId: string,
+  avgPace: number | null,
+): Promise<string> {
+  const { data, error } = await supabase
+    .from('runs')
+    .insert({
+      user_id: userId,
+      started_at: input.startedAt,
+      ended_at: input.endedAt,
+      distance_meters: input.distanceMeters,
+      duration_seconds: input.durationSeconds,
+      avg_pace_sec_per_km: avgPace,
+      route: input.route,
+      spotify_track_name: input.spotifyTrackName,
+    })
+    .select('id')
+    .single();
+  if (error) throw error;
+  return (data as { id: string }).id;
 }
 
 export async function deleteRun(id: string): Promise<void> {
-  const localRuns = await getLocalRuns();
-  await saveLocalRuns(localRuns.filter((r) => r.id !== id));
+  const { error } = await supabase.from('runs').delete().eq('id', id);
+  if (error) throw error;
+}
 
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  if (session) {
-    await supabase.from('runs').delete().eq('id', id);
-  }
+export interface WeeklyStats {
+  totalDistanceMeters: number;
+  totalDurationSeconds: number;
+  runCount: number;
 }
 
 export async function getWeeklyStats(): Promise<WeeklyStats> {
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-
-  if (session) {
-    const { data, error } = await supabase.rpc('weekly_stats');
-    if (!error && data && data.length > 0) {
-      const s = data[0];
-      return {
-        week_start: s.week_start,
-        total_distance_km: Number(s.total_distance_km) || 0,
-        total_duration_minutes: Number(s.total_duration_minutes) || 0,
-        total_runs: Number(s.total_runs) || 0,
-        avg_pace_seconds_per_km: Number(s.avg_pace_seconds_per_km) || 0,
-      };
-    }
-  }
-
-  // Fallback computado a partir de corridas locais
-  const runs = await getLocalRuns();
-  const now = new Date();
-  const dayOfWeek = (now.getDay() + 6) % 7; // Segunda = 0
-  const monday = new Date(now);
-  monday.setDate(now.getDate() - dayOfWeek);
-  monday.setHours(0, 0, 0, 0);
-
-  const thisWeekRuns = runs.filter(
-    (r) => new Date(r.started_at).getTime() >= monday.getTime(),
-  );
-
-  const totalDistMeters = thisWeekRuns.reduce((acc, r) => acc + r.distance_meters, 0);
-  const totalDurationSec = thisWeekRuns.reduce((acc, r) => acc + r.duration_seconds, 0);
-  const count = thisWeekRuns.length;
-
-  const totalKm = totalDistMeters / 1000;
-  const avgPace = totalKm > 0 ? Math.round(totalDurationSec / totalKm) : 0;
-
+  const { data, error } = await supabase.rpc('weekly_stats').single();
+  if (error) throw error;
+  const row = data as {
+    total_distance_meters: number;
+    total_duration_seconds: number;
+    run_count: number;
+  };
   return {
-    week_start: monday.toISOString(),
-    total_distance_km: Number(totalKm.toFixed(2)),
-    total_duration_minutes: Math.round(totalDurationSec / 60),
-    total_runs: count,
-    avg_pace_seconds_per_km: avgPace,
+    totalDistanceMeters: Number(row.total_distance_meters),
+    totalDurationSeconds: Number(row.total_duration_seconds),
+    runCount: Number(row.run_count),
   };
 }
