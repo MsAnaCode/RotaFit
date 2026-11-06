@@ -5,8 +5,8 @@ import { supabase } from '@/lib/supabase';
 
 WebBrowser.maybeCompleteAuthSession();
 
-// Link de volta para o app depois do login (esquema "rotafit://").
-export const authRedirectUri = AuthSession.makeRedirectUri({ scheme: 'rotafit' });
+// Link de volta para o app depois do login. Suporta tanto o Expo Go quanto o build final.
+export const authRedirectUri = AuthSession.makeRedirectUri();
 
 // Login com Google, delegado ao próprio Supabase: o app nunca vê um client
 // secret do Google. O Supabase (configurado em Authentication → Providers →

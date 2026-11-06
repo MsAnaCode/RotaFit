@@ -12,8 +12,9 @@ import { friendlyError } from '@/utils/errors';
 // cuida de toda a troca com o Google, e o app só recebe a sessão pronta.
 export default function LoginScreen() {
   const { theme } = useTheme();
-  const { signInWithGoogle } = useAuth();
+  const { signInWithGoogle, signInAsGuest } = useAuth();
   const [loading, setLoading] = useState(false);
+  const [guestLoading, setGuestLoading] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
   async function handlePress() {
@@ -26,6 +27,18 @@ export default function LoginScreen() {
       setFormError(friendlyError(error));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleGuestPress() {
+    setFormError(null);
+    setGuestLoading(true);
+    try {
+      await signInAsGuest();
+    } catch (error) {
+      setFormError(friendlyError(error));
+    } finally {
+      setGuestLoading(false);
     }
   }
 
@@ -44,8 +57,8 @@ export default function LoginScreen() {
 
         <Pressable
           accessibilityRole="button"
-          accessibilityState={{ disabled: loading }}
-          disabled={loading}
+          accessibilityState={{ disabled: loading || guestLoading }}
+          disabled={loading || guestLoading}
           onPress={handlePress}
           style={({ pressed }) => [styles.buttonWrap, pressed && styles.pressed]}
         >
@@ -61,6 +74,28 @@ export default function LoginScreen() {
               </View>
               <Text style={styles.buttonText}>
                 {loading ? 'Entrando...' : 'Continuar com Google'}
+              </Text>
+            </View>
+          </GlassSurface>
+        </Pressable>
+
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ disabled: loading || guestLoading }}
+          disabled={loading || guestLoading}
+          onPress={handleGuestPress}
+          style={({ pressed }) => [styles.buttonWrap, pressed && styles.pressed, { marginTop: 4 }]}
+        >
+          <GlassSurface
+            tint={theme.surface}
+            radius={radius.pill}
+            style={[styles.button, { borderWidth: 1, borderColor: theme.border }]}
+            intensity={30}
+          >
+            <View style={styles.buttonContent}>
+              <Ionicons name="person-outline" size={20} color={theme.text} />
+              <Text style={[styles.buttonText, { color: theme.text }]}>
+                {guestLoading ? 'Acessando...' : 'Entrar no Modo Demonstração'}
               </Text>
             </View>
           </GlassSurface>

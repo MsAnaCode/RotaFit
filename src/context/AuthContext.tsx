@@ -10,6 +10,7 @@ interface AuthContextValue {
   user: User | null;
   loading: boolean;
   signInWithGoogle: () => Promise<void>;
+  signInAsGuest: () => Promise<void>;
   signOut: () => Promise<void>;
 }
 
@@ -39,9 +40,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user: session?.user ?? null,
       loading,
       signInWithGoogle,
+      signInAsGuest: async () => {
+        const fakeUser: User = {
+          id: '11111111-1111-1111-1111-111111111111',
+          app_metadata: {},
+          user_metadata: { full_name: 'Corredor Demo' },
+          aud: 'authenticated',
+          created_at: new Date().toISOString(),
+        } as User;
+        const fakeSession: Session = {
+          access_token: 'demo-token',
+          token_type: 'bearer',
+          expires_in: 3600,
+          refresh_token: 'demo-refresh',
+          user: fakeUser,
+        };
+        setSession(fakeSession);
+      },
       signOut: async () => {
-        const { error } = await supabase.auth.signOut();
-        if (error) throw error;
+        setSession(null);
+        await supabase.auth.signOut().catch(() => undefined);
       },
     }),
     [session, loading],
